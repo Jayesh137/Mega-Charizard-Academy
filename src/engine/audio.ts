@@ -42,6 +42,15 @@ class SfxSynthesizer {
       case 'confetti-pop': this.confettiPop(); break;
       case 'streak-chime': this.streakChime(); break;
       case 'encouragement-warm': this.encouragementWarm(); break;
+      case 'card-flip': this.cardFlip(); break;
+      case 'card-match': this.cardMatch(); break;
+      case 'card-mismatch': this.cardMismatch(); break;
+      case 'power-surge': this.powerSurge(); break;
+      case 'mega-celebration': this.megaCelebration(); break;
+      case 'combo-hit': this.comboHit(); break;
+      case 'session-start': this.sessionStart(); break;
+      case 'achievement-unlock': this.achievementUnlock(); break;
+      case 'evolution-sparkle': this.evolutionSparkle(); break;
     }
   }
 
@@ -459,6 +468,125 @@ class SfxSynthesizer {
     const t = this.ctx.currentTime;
     this.tone(262, t, 0.2, 0.12);         // C4
     this.tone(330, t + 0.05, 0.18, 0.10); // E4
+  }
+
+  /** Quick paper-like flip sound: short noise burst with bandpass, 50ms */
+  private cardFlip(): void {
+    const t = this.ctx.currentTime;
+    const duration = 0.05;
+    const bufferSize = Math.max(1, Math.floor(this.ctx.sampleRate * duration));
+    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = Math.random() * 2 - 1;
+    }
+    const source = this.ctx.createBufferSource();
+    source.buffer = buffer;
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = 2000;
+    filter.Q.value = 1;
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.15, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+    source.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.output);
+    source.start(t);
+    source.stop(t + duration + 0.05);
+  }
+
+  /** Harmonious two-note chord for matching cards: C5+E5 together, 200ms */
+  private cardMatch(): void {
+    const t = this.ctx.currentTime;
+    this.tone(523, t, 0.2, 0.2);  // C5
+    this.tone(659, t, 0.2, 0.2);  // E5 (simultaneous = chord)
+    this.tone(784, t + 0.1, 0.15, 0.15); // G5 delayed sparkle
+  }
+
+  /** Soft descending tone for card mismatch: E4→C4, 150ms */
+  private cardMismatch(): void {
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(330, t);   // E4
+    osc.frequency.linearRampToValueAtTime(262, t + 0.15); // → C4
+    gain.gain.setValueAtTime(0.12, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+    osc.connect(gain);
+    gain.connect(this.output);
+    osc.start(t);
+    osc.stop(t + 0.2);
+  }
+
+  /** Rising oscillator with harmonics for power moments, 400ms */
+  private powerSurge(): void {
+    const t = this.ctx.currentTime;
+    // Base rising sine
+    const osc1 = this.ctx.createOscillator();
+    const gain1 = this.ctx.createGain();
+    osc1.type = 'sawtooth';
+    osc1.frequency.setValueAtTime(200, t);
+    osc1.frequency.exponentialRampToValueAtTime(800, t + 0.4);
+    gain1.gain.setValueAtTime(0.15, t);
+    gain1.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+    osc1.connect(gain1);
+    gain1.connect(this.output);
+    osc1.start(t);
+    osc1.stop(t + 0.45);
+    // Harmonic layer
+    this.tone(400, t + 0.1, 0.2, 0.1, 'triangle');
+    this.tone(600, t + 0.2, 0.15, 0.08, 'triangle');
+  }
+
+  /** Extended fanfare with multiple tones for mega reward, 800ms */
+  private megaCelebration(): void {
+    const t = this.ctx.currentTime;
+    // Full arpeggio: C4→E4→G4→C5→E5→G5→C6
+    const notes = [262, 330, 392, 523, 659, 784, 1047];
+    for (let i = 0; i < notes.length; i++) {
+      this.tone(notes[i], t + i * 0.08, 0.12, 0.2, 'triangle');
+    }
+    // Shimmer overlay
+    this.tone(2000, t + 0.2, 0.6, 0.06);
+    this.tone(3000, t + 0.3, 0.5, 0.04);
+  }
+
+  /** Pitched chime that should be called with rising pitch for combos */
+  private comboHit(): void {
+    const t = this.ctx.currentTime;
+    this.tone(880, t, 0.08, 0.2);  // A5
+    this.tone(1320, t + 0.04, 0.06, 0.15); // E6
+  }
+
+  /** Warm welcoming tone sequence for session start: C4→E4→G4 slow, 600ms */
+  private sessionStart(): void {
+    const t = this.ctx.currentTime;
+    this.tone(262, t, 0.25, 0.15, 'triangle');
+    this.tone(330, t + 0.2, 0.25, 0.15, 'triangle');
+    this.tone(392, t + 0.4, 0.3, 0.18, 'triangle');
+  }
+
+  /** Special distinctive jingle for achievement unlock: quick ascending + descending */
+  private achievementUnlock(): void {
+    const t = this.ctx.currentTime;
+    this.tone(523, t, 0.08, 0.2, 'triangle');         // C5
+    this.tone(659, t + 0.07, 0.08, 0.2, 'triangle');  // E5
+    this.tone(784, t + 0.14, 0.08, 0.2, 'triangle');  // G5
+    this.tone(1047, t + 0.21, 0.12, 0.25, 'triangle'); // C6
+    // Sparkle
+    this.tone(1568, t + 0.3, 0.15, 0.1);  // G6
+    this.tone(2093, t + 0.35, 0.12, 0.08); // C7
+  }
+
+  /** Sparkly ascending shimmer for evolution events */
+  private evolutionSparkle(): void {
+    const t = this.ctx.currentTime;
+    const freqs = [800, 1000, 1200, 1500, 1800, 2200];
+    for (let i = 0; i < freqs.length; i++) {
+      this.tone(freqs[i], t + i * 0.06, 0.08, 0.1 - i * 0.01);
+    }
   }
 }
 

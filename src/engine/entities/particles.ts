@@ -119,6 +119,26 @@ export class ParticlePool {
     }
   }
 
+  /** Star burst: golden particles fly outward in a star pattern */
+  starBurst(x: number, y: number, count: number): void {
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2;
+      const speed = 120 + Math.random() * 80;
+      this.spawn({
+        x, y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        color: i % 3 === 0 ? '#FFD700' : i % 3 === 1 ? '#FFFFFF' : '#FFE066',
+        size: 3 + Math.random() * 4,
+        lifetime: 0.6 + Math.random() * 0.4,
+        gravity: 30,
+        drag: 0.94,
+        fadeOut: true,
+        shrink: true,
+      });
+    }
+  }
+
   /** Spawn flame-style particles drifting upward. */
   flame(x: number, y: number, count: number, colors: string[], spread: number): void {
     for (let i = 0; i < count; i++) {
