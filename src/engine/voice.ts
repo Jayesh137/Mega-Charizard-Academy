@@ -39,14 +39,13 @@ export class VoiceSystem {
   }
 
   /**
-   * Attempt to play an audio file. Returns true if playback started successfully.
+   * Attempt to play an audio file through the Web Audio API voice gain node.
+   * Returns true if playback started successfully.
    * Returns false if the file doesn't exist or can't be played.
    */
   private async tryPlayFile(path: string): Promise<boolean> {
     try {
-      const audio = new Audio(path);
-      await audio.play();
-      return true;
+      return await this.audio.playVoiceFile(path);
     } catch {
       return false;
     }

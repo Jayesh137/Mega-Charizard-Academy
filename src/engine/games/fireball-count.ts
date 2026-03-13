@@ -525,7 +525,7 @@ export class FireballCountGame implements GameScreen {
     this.voice?.ashWrong();
 
     // Show overshoot text
-    this.overshootText = `Oops! We needed ${word}!`;
+    this.overshootText = `Oops! We needed ${NUMBER_WORDS[this.targetNumber]}!`;
     this.overshootAlpha = 1;
 
     // Record as incorrect

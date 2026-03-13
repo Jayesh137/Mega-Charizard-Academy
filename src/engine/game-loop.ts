@@ -1,5 +1,5 @@
 // src/engine/game-loop.ts
-import { MAX_FRAME_DT, FPS_THRESHOLD_MEDIUM, FPS_THRESHOLD_LOW } from '../config/constants';
+import { MAX_FRAME_DT, FPS_THRESHOLD_MEDIUM, FPS_THRESHOLD_LOW, DESIGN_WIDTH, DESIGN_HEIGHT } from '../config/constants';
 import { session } from '../state/session.svelte';
 import { getActivePool } from './entities/particles';
 import type { ScreenManager } from './screen-manager';
@@ -55,7 +55,7 @@ export class GameLoop {
     }
 
     // Clear
-    this.ctx.clearRect(0, 0, 1920, 1080);
+    this.ctx.clearRect(0, 0, DESIGN_WIDTH, DESIGN_HEIGHT);
 
     // Update + render current screen
     this.screenManager.update(dt);

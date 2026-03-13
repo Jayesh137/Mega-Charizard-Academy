@@ -307,6 +307,26 @@ export class AudioManager {
     }
   }
 
+  /**
+   * Load an audio file and play it through the voice gain node.
+   * Returns true if playback started successfully, false otherwise.
+   */
+  async playVoiceFile(path: string): Promise<boolean> {
+    try {
+      await this.loadBuffer(path);
+      const buffer = this.buffers.get(path);
+      if (!buffer) return false;
+
+      const source = this.context.createBufferSource();
+      source.buffer = buffer;
+      source.connect(this.voiceGain);
+      source.start();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   playSfx(path: string, options?: { pitch?: number; volume?: number }): void {
     const buffer = this.buffers.get(path);
     if (!buffer) return;
