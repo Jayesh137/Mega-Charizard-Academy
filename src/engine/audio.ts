@@ -29,6 +29,14 @@ class SfxSynthesizer {
       case 'hatch-crack': this.hatchCrack(); break;
       case 'cheer': this.cheer(); break;
       case 'fire-crackle': this.fireCrackle(); break;
+      case 'victory-fanfare': this.victoryFanfare(); break;
+      case 'star-collect': this.starCollect(); break;
+      case 'level-up': this.levelUp(); break;
+      case 'word-complete': this.wordComplete(); break;
+      case 'pattern-match': this.patternMatch(); break;
+      case 'countdown-tick': this.countdownTick(); break;
+      case 'whoosh-up': this.whooshUp(); break;
+      case 'merge': this.merge(); break;
     }
   }
 
@@ -248,6 +256,119 @@ class SfxSynthesizer {
     gain.connect(this.output);
     source.start(t);
     source.stop(t + duration + 0.05);
+  }
+
+  /** Triumphant 4-note ascending melody: C5→E5→G5→C6 for milestone achievements */
+  private victoryFanfare(): void {
+    const t = this.ctx.currentTime;
+    this.tone(523, t, 0.15, 0.25, 'triangle');          // C5
+    this.tone(659, t + 0.13, 0.15, 0.25, 'triangle');   // E5
+    this.tone(784, t + 0.26, 0.15, 0.25, 'triangle');   // G5
+    this.tone(1047, t + 0.39, 0.25, 0.25, 'triangle');  // C6 held longer
+  }
+
+  /** Quick sparkly ping: A6 then C7 for earning a star */
+  private starCollect(): void {
+    const t = this.ctx.currentTime;
+    this.tone(1760, t, 0.06, 0.2);         // A6
+    this.tone(2093, t + 0.04, 0.05, 0.15); // C7
+  }
+
+  /** Ascending arpeggio with shimmer for evolution events: C4→E4→G4→C5→E5 */
+  private levelUp(): void {
+    const t = this.ctx.currentTime;
+    this.tone(262, t, 0.1, 0.25, 'triangle');         // C4
+    this.tone(330, t + 0.1, 0.1, 0.25, 'triangle');   // E4
+    this.tone(392, t + 0.2, 0.1, 0.25, 'triangle');   // G4
+    this.tone(523, t + 0.3, 0.1, 0.25, 'triangle');   // C5
+    this.tone(659, t + 0.4, 0.1, 0.25, 'triangle');   // E5
+    // High shimmer that fades over the full arpeggio
+    this.tone(2000, t, 0.6, 0.08);
+  }
+
+  /** Three quick ascending pops for completing a word: E5→G5→B5 */
+  private wordComplete(): void {
+    const t = this.ctx.currentTime;
+    this.tone(659, t, 0.08, 0.2);          // E5
+    this.tone(784, t + 0.1, 0.08, 0.2);    // G5 (+20ms gap)
+    this.tone(988, t + 0.2, 0.08, 0.2);    // B5 (+20ms gap)
+  }
+
+  /** Click-lock sound: short noise burst + sine for pattern completion */
+  private patternMatch(): void {
+    const t = this.ctx.currentTime;
+    this.noise(t, 0.02, 0.15);
+    this.tone(440, t + 0.02, 0.1, 0.2);
+  }
+
+  /** Subtle tick: very short sine pop for subitizing countdown */
+  private countdownTick(): void {
+    const t = this.ctx.currentTime;
+    this.tone(600, t, 0.03, 0.1);
+  }
+
+  /** Ascending whoosh: noise with highpass sweep UP (500→2000Hz) over 150ms */
+  private whooshUp(): void {
+    const t = this.ctx.currentTime;
+    const duration = 0.15;
+    const bufferSize = Math.max(1, Math.floor(this.ctx.sampleRate * duration));
+    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = Math.random() * 2 - 1;
+    }
+    const source = this.ctx.createBufferSource();
+    source.buffer = buffer;
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'highpass';
+    filter.frequency.setValueAtTime(500, t);
+    filter.frequency.linearRampToValueAtTime(2000, t + duration);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.2, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+
+    source.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.output);
+    source.start(t);
+    source.stop(t + duration + 0.05);
+  }
+
+  /** Two tones converging (400→500Hz + 600→500Hz) with noise burst for merging */
+  private merge(): void {
+    const t = this.ctx.currentTime;
+    const duration = 0.2;
+
+    // Tone sliding up from 400→500Hz
+    const osc1 = this.ctx.createOscillator();
+    const gain1 = this.ctx.createGain();
+    osc1.type = 'sine';
+    osc1.frequency.setValueAtTime(400, t);
+    osc1.frequency.linearRampToValueAtTime(500, t + duration);
+    gain1.gain.setValueAtTime(0.2, t);
+    gain1.gain.exponentialRampToValueAtTime(0.001, t + duration);
+    osc1.connect(gain1);
+    gain1.connect(this.output);
+    osc1.start(t);
+    osc1.stop(t + duration + 0.05);
+
+    // Tone sliding down from 600→500Hz
+    const osc2 = this.ctx.createOscillator();
+    const gain2 = this.ctx.createGain();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(600, t);
+    osc2.frequency.linearRampToValueAtTime(500, t + duration);
+    gain2.gain.setValueAtTime(0.2, t);
+    gain2.gain.exponentialRampToValueAtTime(0.001, t + duration);
+    osc2.connect(gain2);
+    gain2.connect(this.output);
+    osc2.start(t);
+    osc2.stop(t + duration + 0.05);
+
+    // Short noise burst at convergence point
+    this.noise(t + duration * 0.8, 0.03, 0.15);
   }
 }
 

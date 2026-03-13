@@ -1,12 +1,17 @@
 // src/engine/games/evolution-challenge.ts
 // Mini-game 5: Evolution Challenge — Evolution Chain Recognition & Ordering
 //
-// Two alternating game modes:
+// Three game modes (Kian gets all three; Owen gets recognition + order):
 //   Recognition: "Who does Charmander become?" — pick the next evolution
 //   Order:       "Put them in order!" — tap sprite cards in evolution order
+//   Reverse:     "Who evolves INTO Charmeleon?" — pick the pre-evolution (Kian only)
 //
-// Owen (2.5yo): 2 choices/stages, simple chain (Charmander, Charmeleon)
-// Kian (4yo):   3-4 choices/stages, full chain up to Mega Charizard X
+// Two evolution chains:
+//   Charmander -> Charmeleon -> Charizard -> Mega Charizard X
+//   Pichu -> Pikachu -> Raichu
+//
+// Owen (2.5yo): 2 choices/stages, simple chain segments
+// Kian (4yo):   3-4 choices/stages, full chains, plus reverse mode
 //
 // Systems: SpriteAnimator, VoiceSystem, HintLadder, tracker, FlameMeter
 
@@ -60,18 +65,63 @@ const SUCCESS_ECHOES = ['evolution!', 'power!', 'evolved!'];
 // Evolution Chain Data
 // ---------------------------------------------------------------------------
 
-interface EvolutionEntry {
+interface EvolutionStage {
   name: string;
-  spriteKey: string;
-  scale: number;
+  sprite: string;       // SPRITES key (if available) or placeholder id
+  color: string;        // theme color for placeholder rendering
+  scale: number;        // display scale for sprite
 }
 
-const EVOLUTION_CHAIN: EvolutionEntry[] = [
-  { name: 'Charmander', spriteKey: 'charmander', scale: 2.5 },
-  { name: 'Charmeleon', spriteKey: 'charmeleon', scale: 2.5 },
-  { name: 'Charizard', spriteKey: 'charizard', scale: 2 },
-  { name: 'Mega Charizard X', spriteKey: 'charizard-megax', scale: 2 },
+interface EvolutionChain {
+  name: string;
+  stages: EvolutionStage[];
+  particleColors: string[];   // particle palette for this chain
+}
+
+const EVOLUTION_CHAINS: EvolutionChain[] = [
+  {
+    name: 'Charmander',
+    stages: [
+      { name: 'Charmander', sprite: 'charmander', color: '#FF6B35', scale: 2.5 },
+      { name: 'Charmeleon', sprite: 'charmeleon', color: '#FF4444', scale: 2.5 },
+      { name: 'Charizard', sprite: 'charizard', color: '#FF8C00', scale: 2 },
+      { name: 'Mega Charizard X', sprite: 'charizard-megax', color: '#37B1E2', scale: 2 },
+    ],
+    particleColors: ['#FF6B35', '#FF4444', '#FF8C00', '#FFD700'],
+  },
+  {
+    name: 'Pikachu',
+    stages: [
+      { name: 'Pichu', sprite: 'pichu', color: '#FFE066', scale: 2.5 },
+      { name: 'Pikachu', sprite: 'pikachu', color: '#FFD700', scale: 2.5 },
+      { name: 'Raichu', sprite: 'raichu', color: '#FF8C00', scale: 2 },
+    ],
+    particleColors: ['#FFE066', '#FFD700', '#FFFFFF', '#FFF8DC'],
+  },
 ];
+
+/** Check if a sprite key has a loaded sprite sheet config */
+function hasSpriteSheet(key: string): boolean {
+  return key in SPRITES;
+}
+
+// Flatten all stages across chains for building distractor pools
+function allStages(): { chain: EvolutionChain; stage: EvolutionStage; chainIndex: number; stageIndex: number }[] {
+  const result: { chain: EvolutionChain; stage: EvolutionStage; chainIndex: number; stageIndex: number }[] = [];
+  for (let ci = 0; ci < EVOLUTION_CHAINS.length; ci++) {
+    const chain = EVOLUTION_CHAINS[ci];
+    for (let si = 0; si < chain.stages.length; si++) {
+      result.push({ chain, stage: chain.stages[si], chainIndex: ci, stageIndex: si });
+    }
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Legacy compatibility type (maps to EvolutionStage)
+// ---------------------------------------------------------------------------
+
+type EvolutionEntry = EvolutionStage;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -79,20 +129,21 @@ const EVOLUTION_CHAIN: EvolutionEntry[] = [
 
 interface SpriteCard {
   entry: EvolutionEntry;
+  chain: EvolutionChain;     // which chain this card belongs to
   x: number;
   y: number;
-  animator: SpriteAnimator;
+  animator: SpriteAnimator | null;  // null if using placeholder rendering
   alive: boolean;
   dimmed: boolean;
   bobPhase: number;
-  isCorrect: boolean;         // recognition mode: is this the right answer?
-  orderIndex: number;         // order mode: expected tap position (0-based), -1 for recognition
+  isCorrect: boolean;         // recognition/reverse mode: is this the right answer?
+  orderIndex: number;         // order mode: expected tap position (0-based), -1 for recognition/reverse
   locked: boolean;            // order mode: card has been correctly tapped
   shakeTimer: number;         // > 0 while shaking from wrong answer
   lockBadge: number;          // order mode: displayed badge number (1-based), 0 if not locked
 }
 
-type PromptMode = 'recognition' | 'order';
+type PromptMode = 'recognition' | 'order' | 'reverse';
 
 type GamePhase =
   | 'banner'
@@ -129,11 +180,16 @@ export class EvolutionChallengeGame implements GameScreen {
   private cards: SpriteCard[] = [];
   private centerSprite: SpriteAnimator | null = null;
   private centerEntry: EvolutionEntry | null = null;
+  private centerChain: EvolutionChain | null = null;
   private correctEntry: EvolutionEntry | null = null;
 
   // Order mode state
   private orderTapIndex = 0;   // next expected tap position
   private orderSequence: EvolutionEntry[] = []; // correct order
+  private orderChain: EvolutionChain | null = null;
+
+  // Current chain for this prompt
+  private activeChain: EvolutionChain = EVOLUTION_CHAINS[0];
 
   // Recognition mode label
   private questionText = '';
@@ -173,6 +229,15 @@ export class EvolutionChallengeGame implements GameScreen {
   }
 
   // -----------------------------------------------------------------------
+  // Chain selection
+  // -----------------------------------------------------------------------
+
+  /** Pick a random chain for this prompt */
+  private pickChain(): EvolutionChain {
+    return EVOLUTION_CHAINS[Math.floor(Math.random() * EVOLUTION_CHAINS.length)];
+  }
+
+  // -----------------------------------------------------------------------
   // Phase transitions
   // -----------------------------------------------------------------------
 
@@ -192,9 +257,11 @@ export class EvolutionChallengeGame implements GameScreen {
     this.cards = [];
     this.centerSprite = null;
     this.centerEntry = null;
+    this.centerChain = null;
     this.correctEntry = null;
     this.orderTapIndex = 0;
     this.orderSequence = [];
+    this.orderChain = null;
 
     this.gameContext.events.emit({ type: 'show-banner', turn });
 
@@ -218,13 +285,25 @@ export class EvolutionChallengeGame implements GameScreen {
     this.phase = 'show-pokemon';
     this.phaseTimer = 0;
 
-    // Alternate modes: even = recognition, odd = order
-    this.promptMode = this.promptIndex % 2 === 0 ? 'recognition' : 'order';
+    // Mode rotation:
+    // Owen: even=recognition, odd=order
+    // Kian: 0=recognition, 1=order, 2=reverse, then repeats
+    if (this.isOwen) {
+      this.promptMode = this.promptIndex % 2 === 0 ? 'recognition' : 'order';
+    } else {
+      const modeIndex = this.promptIndex % 3;
+      this.promptMode = modeIndex === 0 ? 'recognition' : modeIndex === 1 ? 'order' : 'reverse';
+    }
+
+    // Pick chain for this prompt
+    this.activeChain = this.pickChain();
 
     if (this.promptMode === 'recognition') {
       this.setupRecognition();
-    } else {
+    } else if (this.promptMode === 'order') {
       this.setupOrder();
+    } else {
+      this.setupReverse();
     }
 
     this.audio?.playSynth('pop');
@@ -235,7 +314,7 @@ export class EvolutionChallengeGame implements GameScreen {
     this.phaseTimer = 0;
     this.inputLocked = false;
 
-    if (this.promptMode === 'recognition') {
+    if (this.promptMode === 'recognition' || this.promptMode === 'reverse') {
       // Initialize hint ladder with the correct answer name
       this.hintLadder.startPrompt(this.correctEntry?.name ?? '');
     } else {
@@ -251,12 +330,15 @@ export class EvolutionChallengeGame implements GameScreen {
 
     this.gameContext.events.emit({ type: 'celebration', intensity: 'normal' });
 
+    // Use chain-appropriate particle colors
+    const colors = this.activeChain.particleColors;
+
     // Big particle burst
     for (let i = 0; i < 20; i++) {
       const bx = randomRange(300, DESIGN_WIDTH - 300);
       const by = randomRange(200, DESIGN_HEIGHT - 200);
       this.particles.burst(bx, by, 3,
-        FIRE_COLORS[Math.floor(Math.random() * FIRE_COLORS.length)], 80, 0.7);
+        colors[Math.floor(Math.random() * colors.length)], 80, 0.7);
     }
   }
 
@@ -284,30 +366,38 @@ export class EvolutionChallengeGame implements GameScreen {
   // -----------------------------------------------------------------------
 
   private setupRecognition(): void {
-    // Owen: pick from first 2 (Charmander, Charmeleon) since they know those
-    // Kian: pick from first 3 (Charmander, Charmeleon, Charizard)
-    const maxIndex = this.isOwen ? 2 : 3; // exclusive upper bound (not the last one, since it has no "next")
+    const chain = this.activeChain;
+    const stages = chain.stages;
+
+    // Owen: pick from first 2 stages (since they know simpler ones)
+    // Kian: pick from all but last (each has a "next")
+    const maxIndex = this.isOwen
+      ? Math.min(2, stages.length - 1)
+      : stages.length - 1; // exclusive upper bound
 
     // Check spaced repetition — prefer showing previously-missed evolution stages
     let stageIndex = Math.floor(Math.random() * maxIndex);
     const repeats = tracker.getRepeatConcepts('evolution');
     if (repeats.length > 0) {
-      const found = EVOLUTION_CHAIN.findIndex(
-        e => repeats.includes(e.name) && EVOLUTION_CHAIN.indexOf(e) < maxIndex,
+      const found = stages.findIndex(
+        (e, idx) => repeats.includes(e.name) && idx < maxIndex,
       );
       if (found >= 0) {
         stageIndex = found;
-        tracker.markRepeated(EVOLUTION_CHAIN[found].name, 'evolution');
+        tracker.markRepeated(stages[found].name, 'evolution');
       }
     }
-    const shownEntry = EVOLUTION_CHAIN[stageIndex];
-    const correctAnswer = EVOLUTION_CHAIN[stageIndex + 1];
+    const shownEntry = stages[stageIndex];
+    const correctAnswer = stages[stageIndex + 1];
 
     this.centerEntry = shownEntry;
+    this.centerChain = chain;
     this.correctEntry = correctAnswer;
 
-    // Create center sprite animator
-    this.centerSprite = new SpriteAnimator(SPRITES[shownEntry.spriteKey]);
+    // Create center sprite animator (or null for placeholder)
+    this.centerSprite = hasSpriteSheet(shownEntry.sprite)
+      ? new SpriteAnimator(SPRITES[shownEntry.sprite])
+      : null;
 
     // Build question text
     this.questionText = `Who does ${shownEntry.name} become?`;
@@ -317,24 +407,90 @@ export class EvolutionChallengeGame implements GameScreen {
 
     // Build choice cards
     const choiceCount = this.isOwen ? 2 : 3;
-    const cardEntries: EvolutionEntry[] = [correctAnswer];
+    const cardEntries: { entry: EvolutionEntry; chain: EvolutionChain }[] = [
+      { entry: correctAnswer, chain },
+    ];
 
-    // Add wrong choices (not the shown pokemon, not the correct answer)
-    const wrongPool = EVOLUTION_CHAIN.filter(
-      e => e.spriteKey !== shownEntry.spriteKey && e.spriteKey !== correctAnswer.spriteKey,
+    // Add wrong choices from all chains (not the shown pokemon, not the correct answer)
+    const all = allStages();
+    const wrongPool = all.filter(
+      s => s.stage.name !== shownEntry.name && s.stage.name !== correctAnswer.name,
     );
     const shuffledWrong = [...wrongPool].sort(() => Math.random() - 0.5);
     for (let i = 0; i < choiceCount - 1 && i < shuffledWrong.length; i++) {
-      cardEntries.push(shuffledWrong[i]);
+      cardEntries.push({ entry: shuffledWrong[i].stage, chain: shuffledWrong[i].chain });
     }
 
     // Shuffle so correct isn't always first
     cardEntries.sort(() => Math.random() - 0.5);
 
     // Create sprite cards
-    this.cards = cardEntries.map((entry) => this.makeCard(
+    this.cards = cardEntries.map(({ entry, chain: c }) => this.makeCard(
       entry,
-      entry.spriteKey === correctAnswer.spriteKey,
+      c,
+      entry.name === correctAnswer.name,
+      -1, // not order mode
+    ));
+
+    this.positionCards();
+  }
+
+  // -----------------------------------------------------------------------
+  // Reverse Recognition Mode Setup (Kian only)
+  // -----------------------------------------------------------------------
+
+  private setupReverse(): void {
+    const chain = this.activeChain;
+    const stages = chain.stages;
+
+    // For reverse: show an evolved form, ask "Who evolves INTO [name]?"
+    // Can show stages[1] through stages[last], answer is the previous stage
+    const minIndex = 1;
+    const maxIndex = stages.length; // exclusive
+    const stageIndex = minIndex + Math.floor(Math.random() * (maxIndex - minIndex));
+
+    const shownEntry = stages[stageIndex];     // the evolved form shown
+    const correctAnswer = stages[stageIndex - 1]; // the pre-evolution (answer)
+
+    this.centerEntry = shownEntry;
+    this.centerChain = chain;
+    this.correctEntry = correctAnswer;
+
+    // Create center sprite animator (or null for placeholder)
+    this.centerSprite = hasSpriteSheet(shownEntry.sprite)
+      ? new SpriteAnimator(SPRITES[shownEntry.sprite])
+      : null;
+
+    // Build question text
+    this.questionText = `Who evolves INTO ${shownEntry.name}?`;
+
+    // Voice prompt
+    this.voice?.prompt(shownEntry.name, this.questionText);
+
+    // Build choice cards (Kian only gets reverse, so always 3 choices)
+    const choiceCount = 3;
+    const cardEntries: { entry: EvolutionEntry; chain: EvolutionChain }[] = [
+      { entry: correctAnswer, chain },
+    ];
+
+    // Add wrong choices from all chains (not the shown pokemon, not the correct answer)
+    const all = allStages();
+    const wrongPool = all.filter(
+      s => s.stage.name !== shownEntry.name && s.stage.name !== correctAnswer.name,
+    );
+    const shuffledWrong = [...wrongPool].sort(() => Math.random() - 0.5);
+    for (let i = 0; i < choiceCount - 1 && i < shuffledWrong.length; i++) {
+      cardEntries.push({ entry: shuffledWrong[i].stage, chain: shuffledWrong[i].chain });
+    }
+
+    // Shuffle so correct isn't always first
+    cardEntries.sort(() => Math.random() - 0.5);
+
+    // Create sprite cards
+    this.cards = cardEntries.map(({ entry, chain: c }) => this.makeCard(
+      entry,
+      c,
+      entry.name === correctAnswer.name,
       -1, // not order mode
     ));
 
@@ -346,19 +502,31 @@ export class EvolutionChallengeGame implements GameScreen {
   // -----------------------------------------------------------------------
 
   private setupOrder(): void {
-    // Owen: 2 consecutive stages, scrambled
-    // Kian: 3-4 stages, scrambled
-    const stageCount = this.isOwen ? 2 : (Math.random() < 0.5 ? 3 : 4);
+    const chain = this.activeChain;
+    const stages = chain.stages;
 
-    // Always start from beginning of chain:
-    // Owen (2): [Charmander, Charmeleon]
-    // Kian (3): [Charmander, Charmeleon, Charizard]
-    // Kian (4): full chain
-    this.orderSequence = EVOLUTION_CHAIN.slice(0, stageCount);
+    // Owen: 2 consecutive stages, scrambled
+    // Kian: 3-4 stages (capped by chain length), scrambled
+    const maxStages = stages.length;
+    let stageCount: number;
+    if (this.isOwen) {
+      stageCount = Math.min(2, maxStages);
+    } else {
+      if (maxStages <= 3) {
+        stageCount = maxStages; // Use full chain for short chains like Pikachu
+      } else {
+        stageCount = Math.random() < 0.5 ? 3 : maxStages;
+      }
+    }
+
+    // Always start from beginning of chain
+    this.orderSequence = stages.slice(0, stageCount);
+    this.orderChain = chain;
 
     this.questionText = 'Put them in order!';
     this.centerEntry = null;
     this.centerSprite = null;
+    this.centerChain = null;
     this.correctEntry = null;
     this.orderTapIndex = 0;
 
@@ -367,7 +535,7 @@ export class EvolutionChallengeGame implements GameScreen {
 
     // Create cards in correct order, then scramble
     const orderedCards = this.orderSequence.map((entry, i) =>
-      this.makeCard(entry, false, i),
+      this.makeCard(entry, chain, false, i),
     );
 
     // Scramble card positions (but keep orderIndex intact)
@@ -382,14 +550,18 @@ export class EvolutionChallengeGame implements GameScreen {
 
   private makeCard(
     entry: EvolutionEntry,
+    chain: EvolutionChain,
     isCorrect: boolean,
     orderIndex: number,
   ): SpriteCard {
     return {
       entry,
+      chain,
       x: 0,
       y: 0,
-      animator: new SpriteAnimator(SPRITES[entry.spriteKey]),
+      animator: hasSpriteSheet(entry.sprite)
+        ? new SpriteAnimator(SPRITES[entry.sprite])
+        : null,
       alive: true,
       dimmed: false,
       bobPhase: randomRange(0, Math.PI * 2),
@@ -430,7 +602,7 @@ export class EvolutionChallengeGame implements GameScreen {
   }
 
   // -----------------------------------------------------------------------
-  // Recognition Mode — Correct / Wrong
+  // Recognition / Reverse Mode — Correct / Wrong
   // -----------------------------------------------------------------------
 
   private handleRecognitionCorrect(card: SpriteCard): void {
@@ -448,8 +620,29 @@ export class EvolutionChallengeGame implements GameScreen {
     // Ash celebration: "YEAH! That's it!" / "AWESOME!" etc.
     this.voice?.ashCorrect();
 
-    this.particles.burst(card.x, card.y, 40, '#37B1E2', 200, 1.0);
+    // Use chain-appropriate color for particles
+    const burstColor = card.entry.color;
+    this.particles.burst(card.x, card.y, 40, burstColor, 200, 1.0);
     this.particles.burst(card.x, card.y, 15, '#ffffff', 120, 0.5);
+
+    // Voice the evolution relationship
+    if (this.promptMode === 'recognition' && this.centerEntry) {
+      // "Charmander evolves into Charmeleon!"
+      setTimeout(() => {
+        this.voice?.successEcho(
+          `${this.centerEntry!.name} evolves into ${card.entry.name}`,
+          'evolution!',
+        );
+      }, 800);
+    } else if (this.promptMode === 'reverse' && this.centerEntry) {
+      // "Charmander evolves into Charmeleon!"
+      setTimeout(() => {
+        this.voice?.successEcho(
+          `${card.entry.name} evolves into ${this.centerEntry!.name}`,
+          'evolution!',
+        );
+      }, 800);
+    }
 
     this.startCelebrate();
   }
@@ -485,7 +678,7 @@ export class EvolutionChallengeGame implements GameScreen {
 
     this.audio?.playSynth('pop');
     this.voice?.ashCorrect();
-    this.particles.burst(correctCard.x, correctCard.y, 20, '#37B1E2', 120, 0.8);
+    this.particles.burst(correctCard.x, correctCard.y, 20, correctCard.entry.color, 120, 0.8);
 
     // Play encouragement video clip
     const encClip = clipManager.pick('encouragement');
@@ -513,8 +706,8 @@ export class EvolutionChallengeGame implements GameScreen {
       tracker.recordAnswer(card.entry.name, 'evolution', true);
       this.flameMeter.addCharge(1);
 
-      // Particle burst on locked card
-      this.particles.burst(card.x, card.y, 25, '#37B1E2', 150, 0.8);
+      // Particle burst on locked card with chain color
+      this.particles.burst(card.x, card.y, 25, card.entry.color, 150, 0.8);
       this.particles.burst(card.x, card.y, 10, '#ffffff', 80, 0.4);
 
       // Check if all tapped
@@ -591,7 +784,9 @@ export class EvolutionChallengeGame implements GameScreen {
 
     // Update card animators
     for (const card of this.cards) {
-      card.animator.update(dt);
+      if (card.animator) {
+        card.animator.update(dt);
+      }
       card.bobPhase += dt * 1.5;
       if (card.shakeTimer > 0) {
         card.shakeTimer = Math.max(0, card.shakeTimer - dt);
@@ -616,14 +811,15 @@ export class EvolutionChallengeGame implements GameScreen {
         break;
 
       case 'celebrate':
-        // Ambient celebration sparks
+        // Ambient celebration sparks — use chain-specific colors
         if (Math.random() < 0.3) {
+          const colors = this.activeChain.particleColors;
           this.particles.spawn({
             x: randomRange(200, DESIGN_WIDTH - 200),
             y: randomRange(200, DESIGN_HEIGHT - 200),
             vx: randomRange(-30, 30),
             vy: randomRange(-60, -20),
-            color: FIRE_COLORS[Math.floor(Math.random() * FIRE_COLORS.length)],
+            color: colors[Math.floor(Math.random() * colors.length)],
             size: randomRange(2, 6),
             lifetime: randomRange(0.3, 0.7),
             drag: 0.96,
@@ -642,15 +838,44 @@ export class EvolutionChallengeGame implements GameScreen {
       (this.phase === 'show-pokemon' || this.phase === 'choice') &&
       Math.random() < 0.08
     ) {
+      // Chain-themed ambient particles
+      const isPikachuChain = this.activeChain.name === 'Pikachu';
+      const ambientColors = isPikachuChain
+        ? this.activeChain.particleColors
+        : FIRE_COLORS;
+
       this.particles.spawn({
         x: randomRange(100, DESIGN_WIDTH - 100),
         y: randomRange(DESIGN_HEIGHT * 0.3, DESIGN_HEIGHT * 0.9),
         vx: randomRange(-10, 10),
         vy: randomRange(-40, -15),
-        color: FIRE_COLORS[Math.floor(Math.random() * FIRE_COLORS.length)],
+        color: ambientColors[Math.floor(Math.random() * ambientColors.length)],
         size: randomRange(1.5, 4),
         lifetime: randomRange(0.4, 1.0),
         drag: 0.97,
+        fadeOut: true,
+        shrink: true,
+      });
+    }
+
+    // Pikachu chain: spark/lightning particle effects near center sprite
+    if (
+      this.activeChain.name === 'Pikachu' &&
+      (this.phase === 'show-pokemon' || this.phase === 'choice') &&
+      this.centerEntry &&
+      Math.random() < 0.12
+    ) {
+      const cx = DESIGN_WIDTH / 2;
+      const cy = DESIGN_HEIGHT * 0.35;
+      this.particles.spawn({
+        x: cx + randomRange(-80, 80),
+        y: cy + randomRange(-60, 60),
+        vx: randomRange(-60, 60),
+        vy: randomRange(-80, -20),
+        color: Math.random() < 0.5 ? '#FFD700' : '#FFFFFF',
+        size: randomRange(1, 3),
+        lifetime: randomRange(0.15, 0.35),
+        drag: 0.9,
         fadeOut: true,
         shrink: true,
       });
@@ -661,7 +886,7 @@ export class EvolutionChallengeGame implements GameScreen {
     const escalated = this.hintLadder.update(dt);
 
     if (escalated && this.hintLadder.hintLevel === 1) {
-      if (this.promptMode === 'recognition' && this.correctEntry) {
+      if ((this.promptMode === 'recognition' || this.promptMode === 'reverse') && this.correctEntry) {
         this.voice?.hintRepeat(this.correctEntry.name);
       } else if (this.promptMode === 'order' && this.orderTapIndex < this.orderSequence.length) {
         this.voice?.hintRepeat(this.orderSequence[this.orderTapIndex].name);
@@ -670,7 +895,7 @@ export class EvolutionChallengeGame implements GameScreen {
 
     if (this.hintLadder.autoCompleted && !this.inputLocked) {
       this.inputLocked = true;
-      if (this.promptMode === 'recognition') {
+      if (this.promptMode === 'recognition' || this.promptMode === 'reverse') {
         this.autoCompleteRecognition();
       } else {
         this.autoCompleteOrder();
@@ -705,10 +930,9 @@ export class EvolutionChallengeGame implements GameScreen {
     ctx.fillStyle = glowGrad;
     ctx.fillRect(SPRITE_X - 200, SPRITE_Y - 200, 400, 400);
 
-    // Center sprite (recognition mode, during show-pokemon and choice)
+    // Center sprite (recognition/reverse mode, during show-pokemon and choice)
     if (
-      this.promptMode === 'recognition' &&
-      this.centerSprite &&
+      (this.promptMode === 'recognition' || this.promptMode === 'reverse') &&
       this.centerEntry &&
       (this.phase === 'show-pokemon' || this.phase === 'choice')
     ) {
@@ -784,28 +1008,35 @@ export class EvolutionChallengeGame implements GameScreen {
   }
 
   // -----------------------------------------------------------------------
-  // Render: Center Sprite (Recognition mode)
+  // Render: Center Sprite (Recognition / Reverse mode)
   // -----------------------------------------------------------------------
 
   private renderCenterSprite(ctx: CanvasRenderingContext2D): void {
-    if (!this.centerSprite || !this.centerEntry) return;
+    if (!this.centerEntry) return;
 
     const cx = DESIGN_WIDTH / 2;
     const cy = DESIGN_HEIGHT * 0.35;
     const scale = this.centerEntry.scale * 1.5; // larger for center display
 
-    // Glow behind sprite
+    // Glow behind sprite — use chain color
+    const glowColor = this.centerEntry.color;
     ctx.save();
     const glow = ctx.createRadialGradient(cx, cy, 20, cx, cy, 180);
-    glow.addColorStop(0, 'rgba(55, 177, 226, 0.2)');
-    glow.addColorStop(1, 'rgba(55, 177, 226, 0)');
+    glow.addColorStop(0, this.colorWithAlpha(glowColor, 0.25));
+    glow.addColorStop(1, this.colorWithAlpha(glowColor, 0));
     ctx.fillStyle = glow;
     ctx.beginPath();
     ctx.arc(cx, cy, 180, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
 
-    this.centerSprite.render(ctx, cx, cy, scale);
+    if (this.centerSprite) {
+      // Render actual sprite sheet
+      this.centerSprite.render(ctx, cx, cy, scale);
+    } else {
+      // Render stylized placeholder
+      this.renderPlaceholderPokemon(ctx, cx, cy, this.centerEntry, scale * 0.6);
+    }
 
     // Name label below center sprite
     ctx.save();
@@ -817,9 +1048,69 @@ export class EvolutionChallengeGame implements GameScreen {
     ctx.lineJoin = 'round';
     ctx.strokeText(this.centerEntry.name, cx, cy + 120);
     ctx.fillStyle = '#ffffff';
-    ctx.shadowColor = 'rgba(55, 177, 226, 0.5)';
+    ctx.shadowColor = this.colorWithAlpha(glowColor, 0.5);
     ctx.shadowBlur = 15;
     ctx.fillText(this.centerEntry.name, cx, cy + 120);
+    ctx.restore();
+  }
+
+  // -----------------------------------------------------------------------
+  // Render: Stylized Placeholder Pokemon (when no sprite sheet)
+  // -----------------------------------------------------------------------
+
+  private renderPlaceholderPokemon(
+    ctx: CanvasRenderingContext2D,
+    cx: number,
+    cy: number,
+    entry: EvolutionEntry,
+    sizeFactor: number,
+  ): void {
+    const radius = 45 * sizeFactor;
+    const color = entry.color;
+
+    ctx.save();
+
+    // Outer glow
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 30;
+
+    // Body oval
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy - 5, radius, radius * 1.15, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Inner lighter highlight
+    ctx.shadowBlur = 0;
+    const lighter = this.lightenColor(color, 0.35);
+    ctx.fillStyle = lighter;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy - radius * 0.25, radius * 0.55, radius * 0.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Eyes — two white dots
+    const eyeY = cy - radius * 0.15;
+    const eyeSpacing = radius * 0.35;
+    const eyeR = radius * 0.12;
+
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(cx - eyeSpacing, eyeY, eyeR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(cx + eyeSpacing, eyeY, eyeR, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Pupils
+    ctx.fillStyle = '#222222';
+    const pupilR = eyeR * 0.55;
+    ctx.beginPath();
+    ctx.arc(cx - eyeSpacing + 1, eyeY + 1, pupilR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(cx + eyeSpacing + 1, eyeY + 1, pupilR, 0, Math.PI * 2);
+    ctx.fill();
+
     ctx.restore();
   }
 
@@ -847,7 +1138,9 @@ export class EvolutionChallengeGame implements GameScreen {
       ctx.roundRect(x - CARD_W / 2, centerY - CARD_H / 2, CARD_W, CARD_H, CARD_RADIUS);
       ctx.fill();
 
-      ctx.strokeStyle = 'rgba(55, 177, 226, 0.4)';
+      // Border color matches chain theme
+      const chainColor = this.activeChain.stages[0].color;
+      ctx.strokeStyle = this.colorWithAlpha(chainColor, 0.4);
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.roundRect(x - CARD_W / 2, centerY - CARD_H / 2, CARD_W, CARD_H, CARD_RADIUS);
@@ -855,20 +1148,20 @@ export class EvolutionChallengeGame implements GameScreen {
 
       // Number badge
       ctx.globalAlpha = fadeIn;
-      ctx.fillStyle = '#37B1E2';
+      ctx.fillStyle = chainColor;
       ctx.font = 'bold 56px Fredoka, Nunito, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(`${i + 1}`, x, centerY - 20);
 
       // Question mark
-      ctx.fillStyle = 'rgba(145, 204, 236, 0.5)';
+      ctx.fillStyle = this.colorWithAlpha(chainColor, 0.5);
       ctx.font = 'bold 36px Fredoka, Nunito, sans-serif';
       ctx.fillText('?', x, centerY + 40);
 
       // Arrow between cards
       if (i < count - 1) {
-        ctx.fillStyle = 'rgba(55, 177, 226, 0.6)';
+        ctx.fillStyle = this.colorWithAlpha(chainColor, 0.6);
         ctx.font = 'bold 40px Fredoka, Nunito, sans-serif';
         ctx.fillText('\u2192', x + spacing / 2, centerY);
       }
@@ -899,7 +1192,7 @@ export class EvolutionChallengeGame implements GameScreen {
     }
 
     // Determine card style
-    const isCorrectHint = this.promptMode === 'recognition' &&
+    const isCorrectHint = (this.promptMode === 'recognition' || this.promptMode === 'reverse') &&
       card.isCorrect &&
       this.hintLadder.hintLevel >= 2 &&
       this.phase === 'choice';
@@ -913,7 +1206,7 @@ export class EvolutionChallengeGame implements GameScreen {
 
     // Card background
     let bgColor = '#1a1a3e';
-    let borderColor = 'rgba(55, 177, 226, 0.5)';
+    let borderColor = this.colorWithAlpha(card.entry.color, 0.5);
     let borderWidth = 3;
 
     if (isLocked) {
@@ -930,9 +1223,9 @@ export class EvolutionChallengeGame implements GameScreen {
     if ((isCorrectHint || isOrderHint) && !isLocked) {
       const pulse = 1 + Math.sin(this.totalTime * 5) * 0.15;
       ctx.save();
-      ctx.shadowColor = '#37B1E2';
+      ctx.shadowColor = card.entry.color;
       ctx.shadowBlur = 25 * pulse;
-      ctx.strokeStyle = '#37B1E2';
+      ctx.strokeStyle = card.entry.color;
       ctx.lineWidth = 4;
       ctx.beginPath();
       ctx.roundRect(
@@ -959,7 +1252,12 @@ export class EvolutionChallengeGame implements GameScreen {
 
     // Sprite inside card (centered in upper portion)
     const spriteY = cy - 25;
-    card.animator.render(ctx, cx, spriteY, card.entry.scale);
+    if (card.animator) {
+      card.animator.render(ctx, cx, spriteY, card.entry.scale);
+    } else {
+      // Placeholder rendering for cards without sprite sheets
+      this.renderPlaceholderPokemon(ctx, cx, spriteY, card.entry, card.entry.scale * 0.4);
+    }
 
     // Name label below sprite
     ctx.fillStyle = '#ffffff';
@@ -1006,7 +1304,7 @@ export class EvolutionChallengeGame implements GameScreen {
   private renderHintLine(ctx: CanvasRenderingContext2D): void {
     let target: SpriteCard | undefined;
 
-    if (this.promptMode === 'recognition') {
+    if (this.promptMode === 'recognition' || this.promptMode === 'reverse') {
       target = this.cards.find(c => c.isCorrect && c.alive);
     } else {
       target = this.cards.find(c => c.orderIndex === this.orderTapIndex && !c.locked);
@@ -1091,7 +1389,11 @@ export class EvolutionChallengeGame implements GameScreen {
 
     const textX = DESIGN_WIDTH / 2;
     const textY = DESIGN_HEIGHT * 0.3;
-    const celebText = this.promptMode === 'order' ? 'EVOLVED!' : 'GREAT!';
+    const celebText = this.promptMode === 'order'
+      ? 'EVOLVED!'
+      : this.promptMode === 'reverse'
+        ? 'CORRECT!'
+        : 'GREAT!';
 
     // Glow
     ctx.save();
@@ -1156,6 +1458,46 @@ export class EvolutionChallengeGame implements GameScreen {
   }
 
   // -----------------------------------------------------------------------
+  // Color Utility Helpers
+  // -----------------------------------------------------------------------
+
+  /** Convert a hex color to rgba with given alpha */
+  private colorWithAlpha(hex: string, alpha: number): string {
+    // Handle common hex formats
+    const h = hex.replace('#', '');
+    let r: number, g: number, b: number;
+    if (h.length === 3) {
+      r = parseInt(h[0] + h[0], 16);
+      g = parseInt(h[1] + h[1], 16);
+      b = parseInt(h[2] + h[2], 16);
+    } else {
+      r = parseInt(h.substring(0, 2), 16);
+      g = parseInt(h.substring(2, 4), 16);
+      b = parseInt(h.substring(4, 6), 16);
+    }
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
+  /** Lighten a hex color by a factor (0-1) */
+  private lightenColor(hex: string, factor: number): string {
+    const h = hex.replace('#', '');
+    let r: number, g: number, b: number;
+    if (h.length === 3) {
+      r = parseInt(h[0] + h[0], 16);
+      g = parseInt(h[1] + h[1], 16);
+      b = parseInt(h[2] + h[2], 16);
+    } else {
+      r = parseInt(h.substring(0, 2), 16);
+      g = parseInt(h.substring(2, 4), 16);
+      b = parseInt(h.substring(4, 6), 16);
+    }
+    r = Math.min(255, Math.round(r + (255 - r) * factor));
+    g = Math.min(255, Math.round(g + (255 - g) * factor));
+    b = Math.min(255, Math.round(b + (255 - b) * factor));
+    return `rgb(${r}, ${g}, ${b})`;
+  }
+
+  // -----------------------------------------------------------------------
   // Input
   // -----------------------------------------------------------------------
 
@@ -1163,12 +1505,12 @@ export class EvolutionChallengeGame implements GameScreen {
     if (this.phase !== 'choice' || this.inputLocked) return;
 
     for (const card of this.cards) {
-      if (card.dimmed && this.promptMode === 'recognition') continue;
+      if (card.dimmed && (this.promptMode === 'recognition' || this.promptMode === 'reverse')) continue;
       if (!card.alive && !card.locked) continue;
       if (card.locked) continue; // already tapped in order mode
 
       if (this.isCardHit(card, x, y)) {
-        if (this.promptMode === 'recognition') {
+        if (this.promptMode === 'recognition' || this.promptMode === 'reverse') {
           if (card.isCorrect) {
             this.handleRecognitionCorrect(card);
           } else {

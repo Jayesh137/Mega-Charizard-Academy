@@ -144,4 +144,104 @@ export const ASH_LINES: Record<string, AshLine[]> = {
   // --- Session limit ---
   session_end: [{ id: 'session-end', text: "Great training today!", file: 'session-end.mp3', category: 'iconic' }],
   daily_limit: [{ id: 'daily-limit', text: "Charizard gave it everything today! See you tomorrow!", file: 'daily-limit.mp3', category: 'iconic' }],
+
+  // --- Word building prompts ---
+  word_build: [
+    { id: 'word-build-1', text: "Let's build a word! You can do it!", file: 'word-build-1.mp3', category: 'word' },
+    { id: 'word-build-2', text: "Spelling time! Let's spell it out!", file: 'word-build-2.mp3', category: 'word' },
+  ],
+  word_complete: [
+    { id: 'word-complete-1', text: "You spelled it! Amazing trainer!", file: 'word-complete-1.mp3', category: 'word' },
+    { id: 'word-complete-2', text: "YEAH! You can READ that!", file: 'word-complete-2.mp3', category: 'word' },
+  ],
+
+  // --- Number bonds prompts ---
+  bonds_prompt: [
+    { id: 'bonds-1', text: "Number bonds time! What makes the number?", file: 'bonds-1.mp3', category: 'math' },
+    { id: 'bonds-2', text: "Can you find the missing part?", file: 'bonds-2.mp3', category: 'math' },
+  ],
+  bonds_complete: [
+    { id: 'bonds-complete-1', text: "That's the bond! You're a math trainer!", file: 'bonds-complete-1.mp3', category: 'math' },
+    { id: 'bonds-complete-2', text: "PERFECT! Those numbers go together!", file: 'bonds-complete-2.mp3', category: 'math' },
+  ],
+
+  // --- Comparison prompts ---
+  compare_more: [
+    { id: 'compare-more-1', text: "Which side has MORE?", file: 'compare-more-1.mp3', category: 'math' },
+    { id: 'compare-more-2', text: "Look carefully! Which has MORE fireballs?", file: 'compare-more-2.mp3', category: 'math' },
+  ],
+  compare_less: [
+    { id: 'compare-less-1', text: "Which side has LESS?", file: 'compare-less-1.mp3', category: 'math' },
+    { id: 'compare-less-2', text: "Which side has FEWER fireballs?", file: 'compare-less-2.mp3', category: 'math' },
+  ],
+  compare_same: [
+    { id: 'compare-same-1', text: "Are they the SAME? Or different?", file: 'compare-same-1.mp3', category: 'math' },
+    { id: 'compare-same-2', text: "Hmm! Do both sides match?", file: 'compare-same-2.mp3', category: 'math' },
+  ],
+
+  // --- Addition celebration ---
+  addition_complete: [
+    { id: 'add-complete-1', text: "You added them up! Great math!", file: 'add-complete-1.mp3', category: 'math' },
+    { id: 'add-complete-2', text: "AWESOME! You counted them all together!", file: 'add-complete-2.mp3', category: 'math' },
+  ],
+
+  // --- Subitizing ---
+  subitize_prompt: [
+    { id: 'subitize-1', text: "Quick! How many did you see?", file: 'subitize-1.mp3', category: 'math' },
+    { id: 'subitize-2', text: "Flash round! How many dots?", file: 'subitize-2.mp3', category: 'math' },
+  ],
+
+  // --- Color pattern prompts ---
+  color_pattern: [
+    { id: 'color-pat-1', text: "What color comes next? Look at the pattern!", file: 'color-pat-1.mp3', category: 'color' },
+    { id: 'color-pat-2', text: "Colors in a pattern! What's next?", file: 'color-pat-2.mp3', category: 'color' },
+  ],
+
+  // --- Color sorting ---
+  color_sort: [
+    { id: 'color-sort-1', text: "Find ALL of them! Collect every one!", file: 'color-sort-1.mp3', category: 'color' },
+    { id: 'color-sort-2', text: "Sorting time! Find them all!", file: 'color-sort-2.mp3', category: 'color' },
+  ],
+  color_sort_complete: [
+    { id: 'color-sort-done-1', text: "You found them ALL! Great job sorting!", file: 'color-sort-done-1.mp3', category: 'color' },
+    { id: 'color-sort-done-2', text: "Every single one! You're a color master!", file: 'color-sort-done-2.mp3', category: 'color' },
+  ],
+
+  // --- Shape pattern prompts ---
+  shape_pattern: [
+    { id: 'shape-pat-1', text: "What shape comes next? See the pattern!", file: 'shape-pat-1.mp3', category: 'shape' },
+    { id: 'shape-pat-2', text: "Shape patterns! What's next in line?", file: 'shape-pat-2.mp3', category: 'shape' },
+  ],
+
+  // --- Shape-color combo ---
+  shape_combo: [
+    { id: 'shape-combo-1', text: "Find the right shape AND the right color!", file: 'shape-combo-1.mp3', category: 'shape' },
+    { id: 'shape-combo-2', text: "Two things to look for! Shape AND color!", file: 'shape-combo-2.mp3', category: 'shape' },
+  ],
+
+  // --- Star milestones ---
+  milestone_super: [
+    { id: 'mile-super-1', text: "SUPER TRAINER! Five stars! Amazing!", file: 'mile-super-1.mp3', category: 'milestone' },
+  ],
+  milestone_mega: [
+    { id: 'mile-mega-1', text: "MEGA TRAINER! Ten stars! You're incredible!", file: 'mile-mega-1.mp3', category: 'milestone' },
+  ],
+  milestone_champion: [
+    { id: 'mile-champ-1', text: "CHAMPION! Twenty stars! Unstoppable!", file: 'mile-champ-1.mp3', category: 'milestone' },
+  ],
+  milestone_master: [
+    { id: 'mile-master-1', text: "POKEMON MASTER! FIFTY STARS! THE VERY BEST!", file: 'mile-master-1.mp3', category: 'milestone' },
+  ],
+
+  // --- Counting encouragement ---
+  count_with_me: [
+    { id: 'count-1', text: "Count with me! One... two... three!", file: 'count-1.mp3', category: 'math' },
+    { id: 'count-2', text: "Let's count them together!", file: 'count-2.mp3', category: 'math' },
+  ],
+
+  // --- Finger counting ---
+  fingers_prompt: [
+    { id: 'fingers-1', text: "Use your fingers! Show me the number!", file: 'fingers-1.mp3', category: 'math' },
+    { id: 'fingers-2', text: "Hold up your fingers and count!", file: 'fingers-2.mp3', category: 'math' },
+  ],
 };
