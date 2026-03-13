@@ -1,7 +1,7 @@
 // src/engine/screens/finale.ts
 // Enhanced victory finale with ClipManager integration.
-// Plays finale clip, MCX sprite flies across, shows all 4 evolution stages.
-// "AMAZING TRAINING, TRAINERS!" title, then "Play Again?" prompt after ~5s.
+// Plays finale clip, MCX sprite flies across, shows session summary with star review,
+// achievement message, and styled "TRAIN AGAIN!" button.
 
 import type { GameScreen, GameContext } from '../screen-manager';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../config/constants';
@@ -16,6 +16,96 @@ import { settings } from '../../state/settings.svelte';
 import { session } from '../../state/session.svelte';
 import { clipManager, evolutionManager } from './hub';
 
+// ---------------------------------------------------------------------------
+// Evolution stage display names
+// ---------------------------------------------------------------------------
+
+const EVOLUTION_DISPLAY_NAMES: Record<string, string> = {
+  charmander: 'Charmander',
+  charmeleon: 'Charmeleon',
+  charizard: 'Charizard',
+  megax: 'Mega Charizard X',
+};
+
+// ---------------------------------------------------------------------------
+// Draw a 5-pointed star (canvas path helper, same as hub.ts)
+// ---------------------------------------------------------------------------
+
+function drawStar(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  outerRadius: number,
+  color: string,
+): void {
+  const innerRadius = outerRadius * 0.4;
+  const points = 5;
+  ctx.save();
+  ctx.beginPath();
+  for (let i = 0; i < points * 2; i++) {
+    const r = i % 2 === 0 ? outerRadius : innerRadius;
+    const angle = (Math.PI / points) * i - Math.PI / 2;
+    const x = cx + r * Math.cos(angle);
+    const y = cy + r * Math.sin(angle);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------------------
+// Rounded rect helper (fill + optional stroke)
+// ---------------------------------------------------------------------------
+
+function fillRoundedRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+): void {
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, r);
+  ctx.fill();
+}
+
+// ---------------------------------------------------------------------------
+// Button dimensions for "TRAIN AGAIN!"
+// ---------------------------------------------------------------------------
+
+const BTN_W = 400;
+const BTN_H = 60;
+const BTN_X = DESIGN_WIDTH / 2 - BTN_W / 2;
+const BTN_Y = DESIGN_HEIGHT * 0.88;
+
+// ---------------------------------------------------------------------------
+// Summary panel dimensions
+// ---------------------------------------------------------------------------
+
+const PANEL_W = 700;
+const PANEL_H = 320;
+const PANEL_X = DESIGN_WIDTH / 2 - PANEL_W / 2;
+const PANEL_Y = DESIGN_HEIGHT * 0.40;
+
+// ---------------------------------------------------------------------------
+// Achievement message thresholds
+// ---------------------------------------------------------------------------
+
+function getAchievementMessage(totalStars: number): string {
+  if (totalStars > 30) return 'INCREDIBLE! You\'re the very best!';
+  if (totalStars >= 16) return 'SUPER trainers in training!';
+  if (totalStars >= 6) return 'Great training session!';
+  return 'Keep training, young trainers!';
+}
+
+// ---------------------------------------------------------------------------
+// Finale Screen
+// ---------------------------------------------------------------------------
+
 export class FinaleScreen implements GameScreen {
   private bg = new Background(60); // many stars for celebratory feel
   private particles = new ParticlePool();
@@ -23,8 +113,19 @@ export class FinaleScreen implements GameScreen {
   private elapsed = 0;
   private spriteX = -300; // start offscreen left
   private showPlayAgain = false;
+  private showSummary = false;
   private gameContext!: GameContext;
   private voice: VoiceSystem | null = null;
+
+  // Snapshot session stats on enter (before any reset)
+  private owenStars = 0;
+  private kianStars = 0;
+  private gamesPlayed = 0;
+  private evolutionStageName = '';
+
+  // Star pop-in animation tracking
+  private starPopTimers: { owen: number; kian: number } = { owen: 0, kian: 0 };
+  private summaryFadeStart = 3.0; // when summary panel begins to fade in
 
   // Evolution stage sprites for the showcase
   private stageSprites: SpriteAnimator[] = [
@@ -44,8 +145,19 @@ export class FinaleScreen implements GameScreen {
     this.elapsed = 0;
     this.spriteX = -300;
     this.showPlayAgain = false;
+    this.showSummary = false;
     setActivePool(this.particles);
     this.particles.clear();
+
+    // Snapshot session stats
+    this.owenStars = session.owenStars;
+    this.kianStars = session.kianStars;
+    this.gamesPlayed = session.gamesCompleted;
+    this.evolutionStageName =
+      EVOLUTION_DISPLAY_NAMES[session.evolutionStage] || 'Charmander';
+
+    // Reset star pop timers
+    this.starPopTimers = { owen: 0, kian: 0 };
 
     // Play finale clip from ClipManager
     const finaleClip = clipManager.pick('finale');
@@ -110,9 +222,49 @@ export class FinaleScreen implements GameScreen {
       );
     }
 
-    // Show "Play Again?" prompt after 5 seconds
-    if (this.elapsed > 5) {
+    // Show summary panel at 3s
+    if (this.elapsed > this.summaryFadeStart) {
+      this.showSummary = true;
+    }
+
+    // Show "TRAIN AGAIN!" button after 6s
+    if (this.elapsed > 6) {
       this.showPlayAgain = true;
+    }
+
+    // Star pop-in particle bursts (triggered once per star, up to 10 visual)
+    if (this.showSummary) {
+      const summaryElapsed = this.elapsed - this.summaryFadeStart;
+      const popInterval = 0.25; // seconds between each star pop
+      const owenVisual = Math.min(this.owenStars, 5);
+      const kianVisual = Math.min(this.kianStars, 5);
+
+      // Owen stars pop-in bursts
+      const prevOwenPops = this.starPopTimers.owen;
+      const currOwenPops = Math.min(
+        Math.floor((summaryElapsed - 0.5) / popInterval),
+        owenVisual,
+      );
+      if (currOwenPops > prevOwenPops && currOwenPops > 0) {
+        this.starPopTimers.owen = currOwenPops;
+        // Gold burst at the star position
+        const starBaseX = PANEL_X + PANEL_W * 0.25 - ((owenVisual - 1) * 30) / 2;
+        const burstSX = starBaseX + (currOwenPops - 1) * 30;
+        this.particles.burst(burstSX, PANEL_Y + 180, 8, '#FFD700', 40, 0.6);
+      }
+
+      // Kian stars pop-in bursts
+      const prevKianPops = this.starPopTimers.kian;
+      const currKianPops = Math.min(
+        Math.floor((summaryElapsed - 0.5) / popInterval),
+        kianVisual,
+      );
+      if (currKianPops > prevKianPops && currKianPops > 0) {
+        this.starPopTimers.kian = currKianPops;
+        const starBaseX = PANEL_X + PANEL_W * 0.75 - ((kianVisual - 1) * 30) / 2;
+        const burstSX = starBaseX + (currKianPops - 1) * 30;
+        this.particles.burst(burstSX, PANEL_Y + 180, 8, '#FFD700', 40, 0.6);
+      }
     }
   }
 
@@ -146,32 +298,35 @@ export class FinaleScreen implements GameScreen {
     // Title shadow for depth
     ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
     ctx.font = 'bold 68px Fredoka, Nunito, sans-serif';
-    ctx.fillText('AMAZING TRAINING!', DESIGN_WIDTH / 2 + 3, DESIGN_HEIGHT * 0.48 + 3);
+    ctx.fillText('AMAZING TRAINING!', DESIGN_WIDTH / 2 + 3, DESIGN_HEIGHT * 0.08 + 3);
 
     // Title
     ctx.fillStyle = theme.palette.ui.bannerGold;
-    ctx.fillText('AMAZING TRAINING!', DESIGN_WIDTH / 2, DESIGN_HEIGHT * 0.48);
+    ctx.fillText('AMAZING TRAINING!', DESIGN_WIDTH / 2, DESIGN_HEIGHT * 0.08);
 
     // "You're the best!" with trainer names
     const littleName = settings.littleTrainerName;
     const bigName = settings.bigTrainerName;
     ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
     ctx.font = 'bold 34px Fredoka, Nunito, sans-serif';
-    ctx.fillText(`${littleName} & ${bigName} — You're the best!`, DESIGN_WIDTH / 2, DESIGN_HEIGHT * 0.55);
+    ctx.fillText(
+      `${littleName} & ${bigName} — You're the best!`,
+      DESIGN_WIDTH / 2,
+      DESIGN_HEIGHT * 0.15,
+    );
     ctx.restore();
 
-    // --- Evolution stage showcase ---
+    // --- Evolution stage showcase (compact, below title) ---
     this.drawEvolutionShowcase(ctx);
 
-    // "Play Again?" prompt (pulses gently)
+    // --- Session Summary Panel ---
+    if (this.showSummary) {
+      this.drawSummaryPanel(ctx);
+    }
+
+    // --- "TRAIN AGAIN!" styled button ---
     if (this.showPlayAgain) {
-      const pulseAlpha = 0.5 + 0.5 * Math.sin(this.elapsed * 3);
-      ctx.save();
-      ctx.fillStyle = `rgba(255, 255, 255, ${pulseAlpha})`;
-      ctx.font = 'bold 30px Fredoka, Nunito, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('Click anywhere to play again', DESIGN_WIDTH / 2, DESIGN_HEIGHT * 0.92);
-      ctx.restore();
+      this.drawTrainAgainButton(ctx);
     }
   }
 
@@ -180,12 +335,15 @@ export class FinaleScreen implements GameScreen {
     this.voice = null;
   }
 
-  handleClick(_x: number, _y: number): void {
+  handleClick(x: number, y: number): void {
     if (this.showPlayAgain) {
-      session.reset();
-      evolutionManager.reset();
-      clipManager.reset();
-      this.gameContext.screenManager.goTo('hub');
+      // Check if click is on the "TRAIN AGAIN!" button
+      if (x >= BTN_X && x <= BTN_X + BTN_W && y >= BTN_Y && y <= BTN_Y + BTN_H) {
+        session.reset();
+        evolutionManager.reset();
+        clipManager.reset();
+        this.gameContext.screenManager.goTo('hub');
+      }
     }
   }
 
@@ -199,13 +357,13 @@ export class FinaleScreen implements GameScreen {
   }
 
   // ---------------------------------------------------------------------------
-  // Evolution stage showcase — shows all 4 stages in a row
+  // Evolution stage showcase — compact row above the summary panel
   // ---------------------------------------------------------------------------
 
   private drawEvolutionShowcase(ctx: CanvasRenderingContext2D): void {
-    const y = DESIGN_HEIGHT * 0.72;
+    const y = DESIGN_HEIGHT * 0.30;
     const spacing = DESIGN_WIDTH / 5;
-    const scales = [4, 4.5, 5, 5.5];
+    const scales = [3, 3.5, 4, 4.5];
 
     // Reveal stages one by one
     for (let i = 0; i < 4; i++) {
@@ -221,7 +379,7 @@ export class FinaleScreen implements GameScreen {
       // Arrow between stages
       if (i > 0) {
         ctx.fillStyle = '#FFD700';
-        ctx.font = 'bold 36px Fredoka, Nunito, sans-serif';
+        ctx.font = 'bold 30px Fredoka, Nunito, sans-serif';
         ctx.textAlign = 'center';
         ctx.fillText('\u2192', (x + spacing * i) / 2, y);
       }
@@ -231,11 +389,224 @@ export class FinaleScreen implements GameScreen {
 
       // Label
       ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 18px Fredoka, Nunito, sans-serif';
+      ctx.font = 'bold 16px Fredoka, Nunito, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(this.stageNames[i], x, y + 50);
+      ctx.fillText(this.stageNames[i], x, y + 40);
 
       ctx.restore();
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Session Summary Panel
+  // ---------------------------------------------------------------------------
+
+  private drawSummaryPanel(ctx: CanvasRenderingContext2D): void {
+    const summaryElapsed = this.elapsed - this.summaryFadeStart;
+    const panelAlpha = Math.min(summaryElapsed / 0.8, 1); // fade in over 0.8s
+
+    ctx.save();
+    ctx.globalAlpha = panelAlpha;
+
+    // Semi-transparent dark panel
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+    fillRoundedRect(ctx, PANEL_X, PANEL_Y, PANEL_W, PANEL_H, 20);
+
+    // Subtle border
+    ctx.strokeStyle = 'rgba(255, 215, 0, 0.3)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(PANEL_X, PANEL_Y, PANEL_W, PANEL_H, 20);
+    ctx.stroke();
+
+    // "SESSION SUMMARY" header
+    ctx.fillStyle = '#FFD700';
+    ctx.font = 'bold 36px Fredoka, Nunito, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.shadowColor = 'rgba(255, 215, 0, 0.4)';
+    ctx.shadowBlur = 12;
+    ctx.fillText('SESSION SUMMARY', DESIGN_WIDTH / 2, PANEL_Y + 18);
+    ctx.shadowBlur = 0;
+
+    // Divider line below header
+    ctx.strokeStyle = 'rgba(255, 215, 0, 0.25)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(PANEL_X + 40, PANEL_Y + 65);
+    ctx.lineTo(PANEL_X + PANEL_W - 40, PANEL_Y + 65);
+    ctx.stroke();
+
+    // --- Two columns: Owen (left) and Kian (right) ---
+    const littleName = settings.littleTrainerName;
+    const bigName = settings.bigTrainerName;
+    const leftCenterX = PANEL_X + PANEL_W * 0.25;
+    const rightCenterX = PANEL_X + PANEL_W * 0.75;
+
+    // Vertical divider
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(PANEL_X + PANEL_W / 2, PANEL_Y + 75);
+    ctx.lineTo(PANEL_X + PANEL_W / 2, PANEL_Y + 210);
+    ctx.stroke();
+
+    // Owen's section
+    this.drawTrainerSection(ctx, littleName, this.owenStars, leftCenterX, summaryElapsed);
+
+    // Kian's section
+    this.drawTrainerSection(ctx, bigName, this.kianStars, rightCenterX, summaryElapsed);
+
+    // --- Games Played row ---
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.font = '26px Fredoka, Nunito, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`Games Played: ${this.gamesPlayed}`, DESIGN_WIDTH / 2, PANEL_Y + 230);
+
+    // --- Evolution stage row ---
+    ctx.fillStyle = '#91CCEC';
+    ctx.font = 'bold 26px Fredoka, Nunito, sans-serif';
+    ctx.fillText(`Evolution: ${this.evolutionStageName}!`, DESIGN_WIDTH / 2, PANEL_Y + 262);
+
+    // --- Achievement message ---
+    const totalStars = this.owenStars + this.kianStars;
+    const message = getAchievementMessage(totalStars);
+    ctx.fillStyle = '#FFD700';
+    ctx.font = 'bold 28px Fredoka, Nunito, sans-serif';
+    ctx.shadowColor = 'rgba(255, 215, 0, 0.3)';
+    ctx.shadowBlur = 8;
+    ctx.fillText(`"${message}"`, DESIGN_WIDTH / 2, PANEL_Y + 298);
+    ctx.shadowBlur = 0;
+
+    ctx.restore();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Draw a single trainer's section in the summary panel
+  // ---------------------------------------------------------------------------
+
+  private drawTrainerSection(
+    ctx: CanvasRenderingContext2D,
+    name: string,
+    starCount: number,
+    centerX: number,
+    summaryElapsed: number,
+  ): void {
+    // Name
+    ctx.fillStyle = '#CCCCDD';
+    ctx.font = 'bold 28px Fredoka, Nunito, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(name, centerX, PANEL_Y + 78);
+
+    // Star count number (large)
+    ctx.fillStyle = '#FFD700';
+    ctx.font = 'bold 42px Fredoka, Nunito, sans-serif';
+    ctx.textBaseline = 'top';
+    ctx.shadowColor = 'rgba(255, 215, 0, 0.4)';
+    ctx.shadowBlur = 8;
+    ctx.fillText(String(starCount), centerX, PANEL_Y + 112);
+    ctx.shadowBlur = 0;
+
+    // "Stars" label
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.font = '20px Fredoka, Nunito, sans-serif';
+    ctx.fillText('Stars', centerX, PANEL_Y + 158);
+
+    // Star icons — pop in one by one, max 5 visible, then "+ N more"
+    const visualMax = 5;
+    const visibleStars = Math.min(starCount, visualMax);
+    const popInterval = 0.25;
+    const starsToShow = Math.min(
+      Math.floor((summaryElapsed - 0.5) / popInterval),
+      visibleStars,
+    );
+
+    if (starsToShow > 0) {
+      const starRowY = PANEL_Y + 194;
+      const starSpacing = 30;
+      const starRowStartX = centerX - ((visibleStars - 1) * starSpacing) / 2;
+
+      for (let i = 0; i < starsToShow; i++) {
+        const sx = starRowStartX + i * starSpacing;
+        // Pop scale animation for the newest star
+        const popAge = summaryElapsed - 0.5 - i * popInterval;
+        const popScale = popAge < 0.15
+          ? 1 + 0.4 * Math.sin((popAge / 0.15) * Math.PI)
+          : 1;
+
+        ctx.save();
+        ctx.translate(sx, starRowY);
+        ctx.scale(popScale, popScale);
+        ctx.translate(-sx, -starRowY);
+
+        ctx.shadowColor = '#FFD700';
+        ctx.shadowBlur = 6;
+        drawStar(ctx, sx, starRowY, 12, '#FFD700');
+        ctx.shadowBlur = 0;
+        ctx.restore();
+      }
+
+      // "+ N more" text if more than 5 stars
+      if (starCount > visualMax && starsToShow >= visualMax) {
+        const moreX = starRowStartX + visibleStars * starSpacing + 10;
+        ctx.fillStyle = 'rgba(255, 215, 0, 0.7)';
+        ctx.font = 'bold 18px Fredoka, Nunito, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`+${starCount - visualMax} more`, moreX, starRowY);
+        ctx.textAlign = 'center'; // reset
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Styled "TRAIN AGAIN!" button with breathing glow
+  // ---------------------------------------------------------------------------
+
+  private drawTrainAgainButton(ctx: CanvasRenderingContext2D): void {
+    const buttonElapsed = this.elapsed - 6;
+    const fadeIn = Math.min(buttonElapsed / 0.5, 1);
+    const pulse = 1 + 0.03 * Math.sin(this.elapsed * 3);
+    const glowIntensity = 0.3 + 0.2 * Math.sin(this.elapsed * 3);
+
+    ctx.save();
+    ctx.globalAlpha = fadeIn;
+
+    // Pulse scale
+    ctx.translate(DESIGN_WIDTH / 2, BTN_Y + BTN_H / 2);
+    ctx.scale(pulse, pulse);
+    ctx.translate(-DESIGN_WIDTH / 2, -(BTN_Y + BTN_H / 2));
+
+    // Pulsing cyan glow behind button
+    ctx.shadowColor = '#37B1E2';
+    ctx.shadowBlur = 15 + 10 * Math.sin(this.elapsed * 3);
+
+    // Button background
+    const grad = ctx.createLinearGradient(BTN_X, BTN_Y, BTN_X, BTN_Y + BTN_H);
+    grad.addColorStop(0, '#37B1E2');
+    grad.addColorStop(1, '#1A5C8A');
+    ctx.fillStyle = grad;
+    ctx.globalAlpha = fadeIn * (glowIntensity > 0.4 ? 1.0 : 0.95);
+    ctx.beginPath();
+    ctx.roundRect(BTN_X, BTN_Y, BTN_W, BTN_H, 16);
+    ctx.fill();
+
+    // Button border glow
+    ctx.globalAlpha = fadeIn;
+    ctx.strokeStyle = '#91CCEC';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // Button text
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 32px Fredoka, Nunito, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('TRAIN AGAIN!', DESIGN_WIDTH / 2, BTN_Y + BTN_H / 2);
+
+    ctx.restore();
   }
 }

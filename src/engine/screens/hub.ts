@@ -53,6 +53,218 @@ const BTN_X = DESIGN_WIDTH / 2 - BTN_W / 2;
 const BTN_Y = DESIGN_HEIGHT * 0.78;
 
 // ---------------------------------------------------------------------------
+// Game card data for hub display
+// ---------------------------------------------------------------------------
+
+interface GameCard {
+  name: string;
+  subtitle: string;
+  icon: 'flame' | 'gem' | 'star' | 'triangle' | 'pokeball';
+  color: string;
+  key: string;
+}
+
+const GAME_CARDS: GameCard[] = [
+  {
+    name: 'Fireball Math',
+    subtitle: 'Counting & Addition',
+    icon: 'flame',
+    color: '#FF6B35',
+    key: 'fireball-count',
+  },
+  {
+    name: 'Color Lab',
+    subtitle: 'Colors & Patterns',
+    icon: 'gem',
+    color: '#9933FF',
+    key: 'flame-colors',
+  },
+  {
+    name: 'Phonics Arena',
+    subtitle: 'Letters & Reading',
+    icon: 'star',
+    color: '#37B1E2',
+    key: 'phonics-arena',
+  },
+  {
+    name: 'Evolution Tower',
+    subtitle: 'Shapes & Patterns',
+    icon: 'triangle',
+    color: '#33CC33',
+    key: 'evolution-tower',
+  },
+  {
+    name: 'Evo Challenge',
+    subtitle: 'Sequences & Memory',
+    icon: 'pokeball',
+    color: '#FF4444',
+    key: 'evolution-challenge',
+  },
+];
+
+// Card layout constants
+const CARD_W = 200;
+const CARD_H = 160;
+const CARD_GAP = 24;
+const CARD_ROW_Y = DESIGN_HEIGHT * 0.60;
+const CARD_RADIUS = 12;
+
+// ---------------------------------------------------------------------------
+// Icon drawing helpers for game cards
+// ---------------------------------------------------------------------------
+
+function drawCardIconFlame(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number): void {
+  ctx.save();
+  const grad = ctx.createLinearGradient(cx, cy - size, cx, cy + size);
+  grad.addColorStop(0, '#FFD700');
+  grad.addColorStop(0.5, '#FF6B35');
+  grad.addColorStop(1, '#FF4500');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  // Teardrop flame shape
+  ctx.moveTo(cx, cy - size);
+  ctx.bezierCurveTo(cx + size * 0.8, cy - size * 0.3, cx + size * 0.7, cy + size * 0.5, cx, cy + size);
+  ctx.bezierCurveTo(cx - size * 0.7, cy + size * 0.5, cx - size * 0.8, cy - size * 0.3, cx, cy - size);
+  ctx.fill();
+  // Inner bright core
+  const innerGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, size * 0.4);
+  innerGrad.addColorStop(0, 'rgba(255, 255, 200, 0.6)');
+  innerGrad.addColorStop(1, 'rgba(255, 215, 0, 0)');
+  ctx.fillStyle = innerGrad;
+  ctx.beginPath();
+  ctx.arc(cx, cy + size * 0.1, size * 0.35, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawCardIconGem(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number): void {
+  ctx.save();
+  const grad = ctx.createLinearGradient(cx - size, cy, cx + size, cy);
+  grad.addColorStop(0, '#7722CC');
+  grad.addColorStop(0.5, '#CC66FF');
+  grad.addColorStop(1, '#9933FF');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  // Diamond / rhombus
+  ctx.moveTo(cx, cy - size);       // top
+  ctx.lineTo(cx + size * 0.7, cy); // right
+  ctx.lineTo(cx, cy + size);       // bottom
+  ctx.lineTo(cx - size * 0.7, cy); // left
+  ctx.closePath();
+  ctx.fill();
+  // Highlight facet
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - size);
+  ctx.lineTo(cx + size * 0.7, cy);
+  ctx.lineTo(cx, cy - size * 0.15);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawCardIconStar(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number): void {
+  ctx.save();
+  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, size);
+  grad.addColorStop(0, '#E0F7FF');
+  grad.addColorStop(1, '#37B1E2');
+  ctx.fillStyle = grad;
+  // Re-use the existing drawStar helper
+  const innerRadius = size * 0.4;
+  const points = 5;
+  ctx.beginPath();
+  for (let i = 0; i < points * 2; i++) {
+    const r = i % 2 === 0 ? size : innerRadius;
+    const angle = (Math.PI / points) * i - Math.PI / 2;
+    const x = cx + r * Math.cos(angle);
+    const y = cy + r * Math.sin(angle);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawCardIconTriangle(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number): void {
+  ctx.save();
+  const grad = ctx.createLinearGradient(cx, cy - size, cx, cy + size);
+  grad.addColorStop(0, '#66EE66');
+  grad.addColorStop(1, '#33CC33');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  // Equilateral triangle
+  const h = size * Math.sqrt(3) / 2;
+  ctx.moveTo(cx, cy - h * 0.7);                        // top
+  ctx.lineTo(cx + size * 0.85, cy + h * 0.6);          // bottom-right
+  ctx.lineTo(cx - size * 0.85, cy + h * 0.6);          // bottom-left
+  ctx.closePath();
+  ctx.fill();
+  // Inner highlight
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - h * 0.7);
+  ctx.lineTo(cx + size * 0.42, cy);
+  ctx.lineTo(cx - size * 0.42, cy);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawCardIconPokeball(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number): void {
+  ctx.save();
+  // Top half (red)
+  ctx.fillStyle = '#FF4444';
+  ctx.beginPath();
+  ctx.arc(cx, cy, size, Math.PI, 0);
+  ctx.closePath();
+  ctx.fill();
+  // Bottom half (white)
+  ctx.fillStyle = '#FFFFFF';
+  ctx.beginPath();
+  ctx.arc(cx, cy, size, 0, Math.PI);
+  ctx.closePath();
+  ctx.fill();
+  // Horizontal band
+  ctx.fillStyle = '#222222';
+  ctx.fillRect(cx - size, cy - size * 0.1, size * 2, size * 0.2);
+  // Center circle (outer)
+  ctx.fillStyle = '#222222';
+  ctx.beginPath();
+  ctx.arc(cx, cy, size * 0.32, 0, Math.PI * 2);
+  ctx.fill();
+  // Center circle (inner)
+  ctx.fillStyle = '#FFFFFF';
+  ctx.beginPath();
+  ctx.arc(cx, cy, size * 0.2, 0, Math.PI * 2);
+  ctx.fill();
+  // Outer ring
+  ctx.strokeStyle = '#222222';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, size, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** Convert hex color like '#FF6B35' to '255, 107, 53' for rgba() strings */
+function hexToRgb(hex: string): string {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.substring(0, 2), 16);
+  const g = parseInt(h.substring(2, 4), 16);
+  const b = parseInt(h.substring(4, 6), 16);
+  return `${r}, ${g}, ${b}`;
+}
+
+const CARD_ICON_DRAWERS: Record<GameCard['icon'], (ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number) => void> = {
+  flame: drawCardIconFlame,
+  gem: drawCardIconGem,
+  star: drawCardIconStar,
+  triangle: drawCardIconTriangle,
+  pokeball: drawCardIconPokeball,
+};
+
+// ---------------------------------------------------------------------------
 // Hub Screen
 // ---------------------------------------------------------------------------
 
@@ -118,6 +330,9 @@ export class HubScreen implements GameScreen {
   private milestoneText = '';
   private milestoneTimer = 0;  // counts up; visible for 2s
 
+  // Track which specific games have been played this session
+  private gamesPlayedThisSession = new Set<string>();
+
   private get audio(): any { return (this.gameContext as any).audio; }
 
   enter(ctx: GameContext): void {
@@ -135,6 +350,11 @@ export class HubScreen implements GameScreen {
     this.prevKianStars = session.kianStars;
     this.owenStarPulse = 0;
     this.kianStarPulse = 0;
+    // Reset played-games tracking at session start
+    if (session.gamesCompleted === 0) {
+      this.gamesPlayedThisSession.clear();
+    }
+
     // Cache VoiceSystem — only create once
     const audio = (ctx as any).audio;
     if (audio && !this.voice) {
@@ -162,6 +382,7 @@ export class HubScreen implements GameScreen {
 
     // Increment games completed when returning from a game
     if (session.currentGame) {
+      this.gamesPlayedThisSession.add(session.currentGame);
       session.gamesCompleted++;
 
       // Check for evolution after game completion
@@ -338,6 +559,9 @@ export class HubScreen implements GameScreen {
 
     // Evolution meter bar
     this.drawEvolutionMeter(ctx);
+
+    // Game cards (visual info tiles)
+    this.drawGameCards(ctx);
 
     // Session progress
     ctx.save();
@@ -516,6 +740,91 @@ export class HubScreen implements GameScreen {
     ctx.font = 'bold 18px Fredoka, Nunito, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('EVOLUTION METER', DESIGN_WIDTH / 2, meterY + meterH + 28);
+
+    ctx.restore();
+  }
+
+  private drawGameCards(ctx: CanvasRenderingContext2D): void {
+    const totalW = GAME_CARDS.length * CARD_W + (GAME_CARDS.length - 1) * CARD_GAP;
+    const startX = DESIGN_WIDTH / 2 - totalW / 2;
+
+    ctx.save();
+
+    for (let i = 0; i < GAME_CARDS.length; i++) {
+      const card = GAME_CARDS[i];
+      const cardX = startX + i * (CARD_W + CARD_GAP);
+      // Gentle bobbing animation — each card has a phase offset
+      const bob = Math.sin(this.time * 1.8 + i * 1.25) * 4;
+      const cardY = CARD_ROW_Y - CARD_H / 2 + bob;
+      const played = this.gamesPlayedThisSession.has(card.key);
+
+      // Card background: dark semi-transparent with colored border
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(cardX, cardY, CARD_W, CARD_H, CARD_RADIUS);
+
+      // Fill
+      ctx.fillStyle = 'rgba(12, 8, 24, 0.75)';
+      ctx.fill();
+
+      // Colored border
+      ctx.strokeStyle = played ? 'rgba(100, 255, 100, 0.5)' : card.color;
+      ctx.lineWidth = played ? 2.5 : 2;
+      ctx.stroke();
+
+      // Subtle inner glow along top
+      const innerGlow = ctx.createLinearGradient(cardX, cardY, cardX, cardY + CARD_H * 0.5);
+      innerGlow.addColorStop(0, `rgba(${hexToRgb(card.color)}, 0.10)`);
+      innerGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = innerGlow;
+      ctx.beginPath();
+      ctx.roundRect(cardX, cardY, CARD_W, CARD_H * 0.5, [CARD_RADIUS, CARD_RADIUS, 0, 0]);
+      ctx.fill();
+
+      ctx.restore();
+
+      // --- Icon area: top half of card ---
+      const iconCx = cardX + CARD_W / 2;
+      const iconCy = cardY + CARD_H * 0.35;
+      const iconSize = 24;
+
+      CARD_ICON_DRAWERS[card.icon](ctx, iconCx, iconCy, iconSize);
+
+      // --- Game name ---
+      ctx.save();
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 20px Fredoka, Nunito, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText(card.name, cardX + CARD_W / 2, cardY + CARD_H * 0.64);
+      ctx.restore();
+
+      // --- Subtitle ---
+      ctx.save();
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+      ctx.font = '14px Fredoka, Nunito, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText(card.subtitle, cardX + CARD_W / 2, cardY + CARD_H * 0.80);
+      ctx.restore();
+
+      // --- Played checkmark (top-right corner) ---
+      if (played) {
+        const checkX = cardX + CARD_W - 20;
+        const checkY = cardY + 16;
+        ctx.save();
+        ctx.strokeStyle = '#66FF66';
+        ctx.lineWidth = 3;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        ctx.moveTo(checkX - 7, checkY);
+        ctx.lineTo(checkX - 2, checkY + 6);
+        ctx.lineTo(checkX + 7, checkY - 5);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
 
     ctx.restore();
   }
