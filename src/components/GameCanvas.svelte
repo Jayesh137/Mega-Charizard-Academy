@@ -18,6 +18,7 @@
   import { PhonicsArenaGame } from '../engine/games/phonics-arena';
   import { EvolutionTowerGame } from '../engine/games/evolution-tower';
   import { EvolutionChallengeGame } from '../engine/games/evolution-challenge';
+  import { MemoryMatchGame } from '../engine/games/memory-match';
   import { ParentDashboardScreen } from '../engine/screens/parent-dashboard';
 
   let canvasEl: HTMLCanvasElement;
@@ -71,6 +72,7 @@
     screenManager.register('phonics-arena', new PhonicsArenaGame());
     screenManager.register('evolution-tower', new EvolutionTowerGame());
     screenManager.register('evolution-challenge', new EvolutionChallengeGame());
+    screenManager.register('memory-match', new MemoryMatchGame());
     const parentDashboard = new ParentDashboardScreen();
     screenManager.register('parent-dashboard', parentDashboard);
     screenManager.goTo('loading');
