@@ -65,3 +65,29 @@ export const colorShades: Record<string, ColorShade> = {
   orange: { light: '#ffaa66', dark: '#cc6600' },
   purple: { light: '#cc66ff', dark: '#6600cc' },
 };
+
+// ---------------------------------------------------------------------------
+// Color patterns (what-comes-next sequences)
+// ---------------------------------------------------------------------------
+
+export interface ColorPattern {
+  sequence: string[];  // color names (4 shown + answer is next)
+  answer: string;      // correct next color
+}
+
+export const colorPatterns: ColorPattern[] = [
+  // ABAB patterns (both kids)
+  { sequence: ['red', 'blue', 'red', 'blue'], answer: 'red' },
+  { sequence: ['yellow', 'red', 'yellow', 'red'], answer: 'yellow' },
+  { sequence: ['blue', 'yellow', 'blue', 'yellow'], answer: 'blue' },
+  { sequence: ['red', 'yellow', 'red', 'yellow'], answer: 'red' },
+  { sequence: ['blue', 'red', 'blue', 'red'], answer: 'blue' },
+  // AABB patterns (both kids)
+  { sequence: ['red', 'red', 'blue', 'blue'], answer: 'red' },
+  { sequence: ['yellow', 'yellow', 'red', 'red'], answer: 'yellow' },
+  { sequence: ['blue', 'blue', 'yellow', 'yellow'], answer: 'blue' },
+  // ABC patterns (Kian only — filtered by caller)
+  { sequence: ['red', 'blue', 'yellow', 'red'], answer: 'blue' },
+  { sequence: ['blue', 'green', 'orange', 'blue'], answer: 'green' },
+  { sequence: ['purple', 'red', 'yellow', 'purple'], answer: 'red' },
+];

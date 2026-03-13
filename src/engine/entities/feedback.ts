@@ -2,6 +2,7 @@
 // Reusable answer feedback system — shows "GREAT!", "Try again!", "Look here!" with particles
 
 import { ParticlePool } from './particles';
+import { session } from '../../state/session.svelte';
 
 export class FeedbackSystem {
   private particles: ParticlePool;
@@ -35,6 +36,18 @@ export class FeedbackSystem {
     const whiteCount = isSuper ? 25 : 15;
     this.particles.burst(x, y, burstCount, this.feedbackColor, 200, 1.0);
     this.particles.burst(x, y, whiteCount, '#ffffff', 120, 0.5);
+
+    // Award stars: 2 for super celebration, 1 for normal
+    const starCount = isSuper ? 2 : 1;
+    session.awardStar(starCount);
+
+    // Star particle effect near the star counter position
+    // Owen is top-left (~80, 230), Kian is top-right (~1840, 230)
+    const isKian = session.currentTurn === 'kian';
+    const starX = isKian ? 1840 : 80;
+    const starY = 230;
+    const starParticleCount = 3 + Math.floor(Math.random() * 3); // 3-5
+    this.particles.burst(starX, starY, starParticleCount, '#FFD700', 60, 0.6);
   }
 
   /** Show wrong answer feedback at position */

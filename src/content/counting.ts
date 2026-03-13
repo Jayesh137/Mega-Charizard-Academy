@@ -71,6 +71,29 @@ export const numberBonds: NumberBond[] = [
   { whole: 5, partA: 4, partB: 1 },
 ];
 
+// ---------------------------------------------------------------------------
+// Comparison mode (Kian)
+// ---------------------------------------------------------------------------
+
+export interface ComparisonPair {
+  a: number;
+  b: number;
+  answer: 'more' | 'less' | 'same';
+}
+
+export const comparisonPairs: ComparisonPair[] = [
+  { a: 3, b: 1, answer: 'more' },
+  { a: 1, b: 4, answer: 'less' },
+  { a: 2, b: 2, answer: 'same' },
+  { a: 5, b: 2, answer: 'more' },
+  { a: 1, b: 3, answer: 'less' },
+  { a: 4, b: 4, answer: 'same' },
+  { a: 3, b: 5, answer: 'less' },
+  { a: 2, b: 1, answer: 'more' },
+  { a: 3, b: 3, answer: 'same' },
+  { a: 1, b: 5, answer: 'less' },
+];
+
 // Voice file: `number-${n}` maps to /audio/voice/prompts/number-1.mp3, etc.
 export function getNumberVoiceFile(n: number): string {
   return `number-${n}`;

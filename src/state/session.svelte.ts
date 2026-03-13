@@ -25,6 +25,8 @@ function createSession() {
   let evolutionMeter = $state(0);        // 0-100
   let evolutionMeterMax = $state(100);
   let gamesCompleted = $state(0);         // 0-4 this session
+  let owenStars = $state(0);
+  let kianStars = $state(0);
 
   function reset() {
     currentScreen = 'loading';
@@ -47,6 +49,8 @@ function createSession() {
     evolutionMeter = 0;
     evolutionMeterMax = 100;
     gamesCompleted = 0;
+    owenStars = 0;
+    kianStars = 0;
   }
 
   function nextTurn(): TurnType {
@@ -105,6 +109,18 @@ function createSession() {
     set evolutionMeterMax(v: number) { evolutionMeterMax = v; },
     get gamesCompleted() { return gamesCompleted; },
     set gamesCompleted(v: number) { gamesCompleted = Math.max(0, v); },
+    get owenStars() { return owenStars; },
+    set owenStars(v: number) { owenStars = Math.max(0, v); },
+    get kianStars() { return kianStars; },
+    set kianStars(v: number) { kianStars = Math.max(0, v); },
+    awardStar(count: number = 1) {
+      const turn = this.currentTurn;
+      if (turn === 'kian') {
+        kianStars += count;
+      } else {
+        owenStars += count; // team turns default to owen
+      }
+    },
     nextTurn,
     reset,
   };

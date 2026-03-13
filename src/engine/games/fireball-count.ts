@@ -7,9 +7,11 @@
 // Owen (little): numbers 1-3, exact targets, slow rhythmic counting, 5 prompts
 //   - Alternates: count mode (odd prompts) / subitizing mode (even prompts)
 // Kian (big):    numbers 1-7, extra targets possible, overshoot is educational, 7 prompts
-//   - 4-cycle: count → addition → count → bonds → repeat
+//   - 5-cycle: count → addition → count → bonds → comparison → repeat
 //   - Addition mode includes finger counting hand visuals
 //   - Bonds mode teaches part-part-whole relationships
+//   - Comparison mode teaches number magnitude ("more or less")
+//   - Visual number line (1-7) at bottom during Kian's turns
 
 import type { GameScreen, GameContext } from '../screen-manager';
 import { Background } from '../entities/backgrounds';
@@ -19,8 +21,8 @@ import { VoiceSystem } from '../voice';
 import { HintLadder } from '../systems/hint-ladder';
 import { FlameMeter } from '../entities/flame-meter';
 import { tracker } from '../../state/tracker.svelte';
-import { countingDifficulty, additionDifficulty, subitizingPatterns, numberBonds } from '../../content/counting';
-import type { NumberBond } from '../../content/counting';
+import { countingDifficulty, additionDifficulty, subitizingPatterns, numberBonds, comparisonPairs } from '../../content/counting';
+import type { NumberBond, ComparisonPair } from '../../content/counting';
 import { randomInt, randomRange } from '../utils/math';
 import {
   DESIGN_WIDTH,
@@ -93,6 +95,23 @@ const BONDS_BUTTON_H = 100;
 const BONDS_BUTTON_Y = 700;
 const BONDS_BUTTON_SPACING = 180;
 
+// Comparison mode (Kian)
+const COMPARE_LEFT_X = 550;
+const COMPARE_RIGHT_X = 1370;
+const COMPARE_GROUP_Y = 400;
+const COMPARE_FIREBALL_R = 40;
+const COMPARE_BUTTON_W = 320;
+const COMPARE_BUTTON_H = 80;
+const COMPARE_BUTTON_Y = 780;
+const COMPARE_BUTTON_SPACING = 360;
+
+// Number line (Kian)
+const NUMLINE_Y = 950;
+const NUMLINE_X_START = 400;
+const NUMLINE_X_END = 1520;
+const NUMLINE_MARKER_R = 15;
+const NUMLINE_COUNT = 7;
+
 // MCX sprite position (top-right corner)
 const SPRITE_X = DESIGN_WIDTH - 160;
 const SPRITE_Y = 160;
@@ -115,14 +134,15 @@ interface FlameTarget {
   group: number;
 }
 
-type PromptMode = 'count' | 'addition' | 'subitize' | 'bonds';
+type PromptMode = 'count' | 'addition' | 'subitize' | 'bonds' | 'comparison';
 type GamePhase =
   | 'banner' | 'engage' | 'prompt' | 'play' | 'celebrate'
   | 'next' | 'overshoot' | 'complete'
   | 'addition-merge'      // animation: two groups slide together
   | 'subitize-flash'      // dots are visible
   | 'subitize-ask'        // dots hidden, choice buttons shown
-  | 'bonds-ask';          // number bonds: pick the missing part
+  | 'bonds-ask'           // number bonds: pick the missing part
+  | 'compare-ask';        // comparison: pick more/less/same
 
 interface SubitizeButton {
   x: number;
@@ -139,6 +159,16 @@ interface BondsButton {
   w: number;
   h: number;
   value: number;
+  correct: boolean;
+}
+
+interface CompareButton {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  label: string;
+  answer: 'more' | 'less' | 'same';
   correct: boolean;
 }
 
@@ -195,6 +225,20 @@ export class FireballCountGame implements GameScreen {
   private bondsButtons: BondsButton[] = [];
   private bondsAnswered = false;
   private bondsCorrect = false;
+
+  // Comparison mode state (Kian)
+  private currentComparison: ComparisonPair | null = null;
+  private compareButtons: CompareButton[] = [];
+  private compareAnswered = false;
+  private compareCorrect = false;
+  private compareLeftPositions: { x: number; y: number }[] = [];
+  private compareRightPositions: { x: number; y: number }[] = [];
+  private compareQuestion: 'more' | 'less' | 'same' = 'more';
+
+  // Number line state (Kian)
+  private numberLineTarget = 0;      // target number to highlight gold
+  private numberLineLit = 0;          // how many markers are lit up
+  private numberLineSecondary = 0;    // second number highlighted (comparison)
 
   // Finger counting hand animation state (addition mode)
   private handAnimTime = 0;       // elapsed since hands appeared
@@ -292,6 +336,8 @@ export class FireballCountGame implements GameScreen {
             this.startSubitizeFlash();
           } else if (this.mode === 'bonds') {
             this.startBondsAsk();
+          } else if (this.mode === 'comparison') {
+            this.startCompareAsk();
           } else {
             this.startPlayPhase();
           }
@@ -309,6 +355,9 @@ export class FireballCountGame implements GameScreen {
         this.updatePlay(dt);
         break;
       case 'bonds-ask':
+        this.updatePlay(dt);
+        break;
+      case 'compare-ask':
         this.updatePlay(dt);
         break;
       case 'play':
@@ -348,6 +397,8 @@ export class FireballCountGame implements GameScreen {
         this.renderSubitizing(ctx);
       } else if (this.mode === 'bonds') {
         this.renderBonds(ctx);
+      } else if (this.mode === 'comparison') {
+        this.renderComparison(ctx);
       } else {
         if (this.mode === 'addition') {
           this.renderEquation(ctx);
@@ -359,6 +410,11 @@ export class FireballCountGame implements GameScreen {
         if (this.phase !== 'addition-merge' || this.additionMergeProgress >= 1) {
           this.renderPips(ctx);
         }
+      }
+
+      // Number line for Kian (always visible during big difficulty turns)
+      if (this.difficulty === 'big') {
+        this.renderNumberLine(ctx);
       }
     }
 
@@ -416,6 +472,20 @@ export class FireballCountGame implements GameScreen {
       return;
     }
 
+    // Comparison ask phase: check button clicks
+    if (this.phase === 'compare-ask' && !this.compareAnswered) {
+      for (const btn of this.compareButtons) {
+        if (
+          x >= btn.x - btn.w / 2 && x <= btn.x + btn.w / 2 &&
+          y >= btn.y - btn.h / 2 && y <= btn.y + btn.h / 2
+        ) {
+          this.onCompareAnswer(btn);
+          return;
+        }
+      }
+      return;
+    }
+
     if (this.phase !== 'play') return;
 
     // Check if any unclicked target was hit
@@ -455,6 +525,24 @@ export class FireballCountGame implements GameScreen {
       }
     }
 
+    // Comparison: L/R/S keys or arrow keys
+    if (this.phase === 'compare-ask' && !this.compareAnswered) {
+      const lowerKey = key.toLowerCase();
+      if (lowerKey === 'arrowleft' || lowerKey === 'l') {
+        // "Left" — find the button that says LEFT has MORE or LEFT has LESS
+        const leftBtn = this.compareButtons.find(b => b.label.startsWith('LEFT'));
+        if (leftBtn) { this.onCompareAnswer(leftBtn); return; }
+      }
+      if (lowerKey === 'arrowright' || lowerKey === 'r') {
+        const rightBtn = this.compareButtons.find(b => b.label.startsWith('RIGHT'));
+        if (rightBtn) { this.onCompareAnswer(rightBtn); return; }
+      }
+      if (lowerKey === 's' || lowerKey === '=') {
+        const sameBtn = this.compareButtons.find(b => b.answer === 'same');
+        if (sameBtn) { this.onCompareAnswer(sameBtn); return; }
+      }
+    }
+
     // Space/Enter clicks the next available target
     if ((key === ' ' || key === 'Enter') && this.phase === 'play') {
       const nextTarget = this.targets.find(t => !t.clicked);
@@ -474,11 +562,12 @@ export class FireballCountGame implements GameScreen {
   /** Determine the prompt mode based on who is playing and which prompt they are on */
   private pickMode(): PromptMode {
     if (this.difficulty === 'big') {
-      // Kian: 4-cycle rotation: count → addition → count → bonds → repeat
+      // Kian: 5-cycle rotation: count → addition → count → bonds → comparison → repeat
       this.kianPromptCount++;
-      const cycle = (this.kianPromptCount - 1) % 4; // 0-based
+      const cycle = (this.kianPromptCount - 1) % 5; // 0-based
       if (cycle === 1) return 'addition';
       if (cycle === 3) return 'bonds';
+      if (cycle === 4) return 'comparison';
       return 'count';
     } else {
       // Owen: alternate count / subitize on each of his prompts
@@ -576,6 +665,8 @@ export class FireballCountGame implements GameScreen {
       this.startSubitizePrompt();
     } else if (this.mode === 'bonds') {
       this.startBondsPrompt();
+    } else if (this.mode === 'comparison') {
+      this.startComparisonPrompt();
     } else {
       this.startCountPrompt();
     }
@@ -613,6 +704,11 @@ export class FireballCountGame implements GameScreen {
     this.pipFills = Array(this.targetNumber).fill(false);
     this.numberScale = 1;
     this.additionComplete = false;
+
+    // Number line state
+    this.numberLineTarget = this.targetNumber;
+    this.numberLineLit = 0;
+    this.numberLineSecondary = 0;
 
     // Create targets
     this.createCountTargets();
@@ -693,6 +789,11 @@ export class FireballCountGame implements GameScreen {
     this.numberScale = 1;
     this.additionMergeProgress = 0;
     this.additionComplete = false;
+
+    // Number line state
+    this.numberLineTarget = this.targetNumber;
+    this.numberLineLit = 0;
+    this.numberLineSecondary = 0;
 
     // Reset hand animation
     this.handAnimTime = 0;
@@ -978,13 +1079,16 @@ export class FireballCountGame implements GameScreen {
           const shownWord = NUMBER_WORDS[this.bondsShownPart] || String(this.bondsShownPart);
           const wholeWord = NUMBER_WORDS[this.currentBond.whole] || String(this.currentBond.whole);
           this.audio?.speakFallback(`What goes with ${shownWord} to make ${wholeWord}?`);
+        } else if (this.mode === 'comparison' && this.currentComparison) {
+          const questionWord = this.compareQuestion === 'more' ? 'MORE' : this.compareQuestion === 'less' ? 'LESS' : 'the SAME';
+          this.audio?.speakFallback(`Which side has ${questionWord}?`);
         } else {
           const word = NUMBER_WORDS[this.targetNumber] || String(this.targetNumber);
           this.voice?.hintRepeat(word);
         }
       } else if (level >= 2) {
         // Visual glow on unclicked targets (count/addition modes)
-        if (this.mode !== 'subitize' && this.mode !== 'bonds') {
+        if (this.mode !== 'subitize' && this.mode !== 'bonds' && this.mode !== 'comparison') {
           for (const t of this.targets) {
             if (!t.clicked) {
               t.hintGlow = true;
@@ -1019,6 +1123,9 @@ export class FireballCountGame implements GameScreen {
 
     // INSTANT feedback: light pip
     this.pipFills[this.clickCount - 1] = true;
+
+    // Update number line progress
+    this.numberLineLit = this.clickCount;
 
     // INSTANT voice: say the count number
     const countWord = NUMBER_WORDS[this.clickCount];
@@ -1109,6 +1216,9 @@ export class FireballCountGame implements GameScreen {
       const shownWord = NUMBER_WORDS[this.bondsShownPart] || String(this.bondsShownPart);
       const wholeWord = NUMBER_WORDS[this.currentBond.whole] || String(this.currentBond.whole);
       this.audio?.speakFallback(`What goes with ${shownWord} to make ${wholeWord}?`);
+    } else if (this.mode === 'comparison') {
+      const questionWord = this.compareQuestion === 'more' ? 'MORE' : this.compareQuestion === 'less' ? 'LESS' : 'the SAME';
+      this.audio?.speakFallback(`Which side has ${questionWord}?`);
     } else {
       this.voice?.playAshLine(`number_${this.targetNumber}`);
     }
@@ -1126,6 +1236,11 @@ export class FireballCountGame implements GameScreen {
 
     if (this.mode === 'bonds') {
       // Handled in onBondsAnswer
+      return;
+    }
+
+    if (this.mode === 'comparison') {
+      // Handled in onCompareAnswer
       return;
     }
 
@@ -1180,8 +1295,8 @@ export class FireballCountGame implements GameScreen {
     // SFX
     this.audio?.playSynth('cheer');
 
-    // Particle burst — bigger for addition/bonds mode
-    const burstCount = (this.mode === 'addition' || this.mode === 'bonds') ? 50 : 30;
+    // Particle burst — bigger for addition/bonds/comparison mode
+    const burstCount = (this.mode === 'addition' || this.mode === 'bonds' || this.mode === 'comparison') ? 50 : 30;
     for (let i = 0; i < burstCount; i++) {
       const x = randomRange(DESIGN_WIDTH * 0.2, DESIGN_WIDTH * 0.8);
       const y = randomRange(DESIGN_HEIGHT * 0.2, DESIGN_HEIGHT * 0.5);
@@ -1225,7 +1340,46 @@ export class FireballCountGame implements GameScreen {
     const textX = DESIGN_WIDTH / 2;
     const textY = DESIGN_HEIGHT * 0.35;
 
-    if (this.mode === 'bonds' && this.bondsCorrect && this.currentBond) {
+    if (this.mode === 'comparison' && this.compareCorrect && this.currentComparison) {
+      // Show comparison celebration: "3 is more than 1!"
+      const comp = this.currentComparison;
+      let compText: string;
+      if (comp.answer === 'same') {
+        compText = `${comp.a} and ${comp.b} are the same!`;
+      } else {
+        const bigger = comp.a > comp.b ? comp.a : comp.b;
+        const smaller = comp.a < comp.b ? comp.a : comp.b;
+        compText = `${bigger} is more than ${smaller}!`;
+      }
+      const compSize = Math.round(68 * scale);
+
+      // Glow
+      ctx.save();
+      ctx.shadowColor = '#FFD700';
+      ctx.shadowBlur = 40;
+      ctx.font = `bold ${compSize}px Fredoka, Nunito, sans-serif`;
+      ctx.fillStyle = '#FFD700';
+      ctx.fillText(compText, textX, textY - 50);
+      ctx.restore();
+
+      // Solid text
+      ctx.font = `bold ${compSize}px Fredoka, Nunito, sans-serif`;
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillText(compText, textX, textY - 50);
+
+      // "GREAT!" below
+      ctx.save();
+      ctx.shadowColor = '#FFD700';
+      ctx.shadowBlur = 30;
+      ctx.font = `bold ${Math.round(72 * scale)}px Fredoka, Nunito, sans-serif`;
+      ctx.fillStyle = '#FFD700';
+      ctx.fillText('GREAT!', textX, textY + 40);
+      ctx.restore();
+
+      ctx.font = `bold ${Math.round(72 * scale)}px Fredoka, Nunito, sans-serif`;
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillText('GREAT!', textX, textY + 40);
+    } else if (this.mode === 'bonds' && this.bondsCorrect && this.currentBond) {
       // Show bond celebration: "2 and 3 make 5!"
       const bond = this.currentBond;
       const bondText = `${this.bondsShownPart} and ${this.bondsAnswer} make ${bond.whole}!`;
@@ -1914,6 +2068,11 @@ export class FireballCountGame implements GameScreen {
     this.bondsCorrect = false;
     this.hintedThisPrompt = false;
 
+    // Number line state
+    this.numberLineTarget = this.currentBond.whole;
+    this.numberLineLit = 0;
+    this.numberLineSecondary = 0;
+
     // Build choice buttons
     this.buildBondsButtons();
 
@@ -2235,6 +2394,510 @@ export class FireballCountGame implements GameScreen {
       ctx.font = 'bold 56px Fredoka, Nunito, sans-serif';
       ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
       ctx.fillText('?', cx, cy);
+    }
+
+    ctx.restore();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Comparison Mode (Kian)
+  // ---------------------------------------------------------------------------
+
+  private startComparisonPrompt(): void {
+    // Pick a random comparison pair
+    const idx = randomInt(0, comparisonPairs.length - 1);
+    this.currentComparison = comparisonPairs[idx];
+
+    this.compareAnswered = false;
+    this.compareCorrect = false;
+    this.hintedThisPrompt = false;
+
+    // Decide the question type based on the pair's answer
+    this.compareQuestion = this.currentComparison.answer === 'same' ? 'same' : this.currentComparison.answer;
+
+    // Number line: highlight both numbers
+    this.numberLineTarget = Math.max(this.currentComparison.a, this.currentComparison.b);
+    this.numberLineLit = this.currentComparison.a;
+    this.numberLineSecondary = this.currentComparison.b;
+
+    // Create fireball cluster positions for each side
+    this.compareLeftPositions = this.buildClusterPositions(
+      COMPARE_LEFT_X, COMPARE_GROUP_Y, this.currentComparison.a,
+    );
+    this.compareRightPositions = this.buildClusterPositions(
+      COMPARE_RIGHT_X, COMPARE_GROUP_Y, this.currentComparison.b,
+    );
+
+    // Build choice buttons
+    this.buildCompareButtons();
+
+    // Start hint ladder
+    this.hints.startPrompt(`compare-${this.currentComparison.a}-${this.currentComparison.b}`);
+
+    // Voice: "Which side has MORE?" / "LESS?" / "Are they the SAME?"
+    const questionWord = this.compareQuestion === 'more' ? 'MORE' : this.compareQuestion === 'less' ? 'LESS' : 'the SAME';
+    this.audio?.speakFallback(`Which side has ${questionWord}?`);
+
+    // SFX
+    this.audio?.playSynth('pop');
+  }
+
+  /** Build fireball positions in a cluster around a center point */
+  private buildClusterPositions(cx: number, cy: number, count: number): { x: number; y: number }[] {
+    const positions: { x: number; y: number }[] = [];
+    if (count === 1) {
+      positions.push({ x: cx, y: cy });
+    } else if (count === 2) {
+      positions.push({ x: cx - 45, y: cy }, { x: cx + 45, y: cy });
+    } else if (count === 3) {
+      positions.push({ x: cx, y: cy - 40 }, { x: cx - 50, y: cy + 30 }, { x: cx + 50, y: cy + 30 });
+    } else if (count === 4) {
+      positions.push(
+        { x: cx - 45, y: cy - 40 }, { x: cx + 45, y: cy - 40 },
+        { x: cx - 45, y: cy + 40 }, { x: cx + 45, y: cy + 40 },
+      );
+    } else {
+      // 5: like a die
+      positions.push(
+        { x: cx - 50, y: cy - 45 }, { x: cx + 50, y: cy - 45 },
+        { x: cx, y: cy },
+        { x: cx - 50, y: cy + 45 }, { x: cx + 50, y: cy + 45 },
+      );
+    }
+    return positions;
+  }
+
+  private buildCompareButtons(): void {
+    if (!this.currentComparison) return;
+
+    const q = this.compareQuestion;
+
+    if (q === 'same') {
+      // 3 buttons: LEFT / RIGHT / SAME!
+      const labels: { label: string; answer: 'more' | 'less' | 'same' }[] = [
+        { label: 'LEFT', answer: 'more' },
+        { label: "THEY'RE the SAME!", answer: 'same' },
+        { label: 'RIGHT', answer: 'less' },
+      ];
+      const totalWidth = (labels.length - 1) * COMPARE_BUTTON_SPACING;
+      const startX = DESIGN_WIDTH / 2 - totalWidth / 2;
+
+      this.compareButtons = labels.map((item, i) => ({
+        x: startX + i * COMPARE_BUTTON_SPACING,
+        y: COMPARE_BUTTON_Y,
+        w: item.answer === 'same' ? COMPARE_BUTTON_W + 60 : COMPARE_BUTTON_W,
+        h: COMPARE_BUTTON_H,
+        label: item.label,
+        answer: item.answer,
+        correct: item.answer === this.currentComparison!.answer,
+      }));
+    } else {
+      // 2 buttons: LEFT has MORE / RIGHT has MORE (or LESS)
+      const verb = q === 'more' ? 'MORE' : 'LESS';
+      const labels: { label: string; answer: 'more' | 'less' | 'same' }[] = [
+        { label: `LEFT has ${verb}`, answer: 'more' },
+        { label: `RIGHT has ${verb}`, answer: 'less' },
+      ];
+
+      // Determine correctness:
+      // If question is "more": left correct when a > b, right correct when b > a
+      // If question is "less": left correct when a < b, right correct when b < a
+      const leftCorrect = q === 'more'
+        ? this.currentComparison!.a > this.currentComparison!.b
+        : this.currentComparison!.a < this.currentComparison!.b;
+
+      const spacing = 500;
+      const startX = DESIGN_WIDTH / 2 - spacing / 2;
+
+      this.compareButtons = labels.map((item, i) => ({
+        x: startX + i * spacing,
+        y: COMPARE_BUTTON_Y,
+        w: COMPARE_BUTTON_W,
+        h: COMPARE_BUTTON_H,
+        label: item.label,
+        answer: item.answer,
+        correct: i === 0 ? leftCorrect : !leftCorrect,
+      }));
+    }
+  }
+
+  private startCompareAsk(): void {
+    this.phase = 'compare-ask';
+    this.phaseTimer = 0;
+  }
+
+  private onCompareAnswer(btn: CompareButton): void {
+    this.compareAnswered = true;
+    this.compareCorrect = btn.correct;
+
+    if (btn.correct) {
+      const comp = this.currentComparison!;
+      const concept = `compare-${comp.a}-${comp.b}`;
+      tracker.recordAnswer(concept, 'number', !this.hintedThisPrompt);
+
+      // Flame meter: 3 for unassisted
+      if (this.hintedThisPrompt) {
+        this.flameMeter.addCharge(2);
+      } else {
+        this.flameMeter.addCharge(3);
+      }
+
+      // Voice: "3 is more than 1!"
+      let spokenText: string;
+      if (comp.answer === 'same') {
+        spokenText = `${comp.a} and ${comp.b} are the same!`;
+      } else {
+        const bigger = comp.a > comp.b ? comp.a : comp.b;
+        const smaller = comp.a < comp.b ? comp.a : comp.b;
+        const bigWord = NUMBER_WORDS[bigger] || String(bigger);
+        const smallWord = NUMBER_WORDS[smaller] || String(smaller);
+        spokenText = `${bigWord} is more than ${smallWord}!`;
+      }
+      this.audio?.speakFallback(spokenText);
+      this.audio?.playSynth('correct-chime');
+
+      // Particle burst on winning group
+      const winPositions = comp.answer === 'more' || comp.answer === 'same'
+        ? this.compareLeftPositions
+        : this.compareRightPositions;
+      for (const pos of winPositions) {
+        this.particles.burst(pos.x, pos.y, 8, '#FFD700', 100, 0.6);
+      }
+
+      setTimeout(() => {
+        this.startCelebrate();
+      }, 500);
+    } else {
+      // Wrong
+      this.hintedThisPrompt = true;
+      const comp = this.currentComparison!;
+      const concept = `compare-${comp.a}-${comp.b}`;
+      tracker.recordAnswer(concept, 'number', false);
+      this.audio?.playSynth('wrong-bonk');
+      this.voice?.ashWrong();
+      this.hints.onMiss();
+
+      if (this.hints.autoCompleted) {
+        // Auto-complete: reveal answer
+        this.compareCorrect = true;
+        this.compareAnswered = true;
+
+        let spokenText: string;
+        if (comp.answer === 'same') {
+          spokenText = `They're the same! Both are ${comp.a}!`;
+        } else {
+          const bigger = comp.a > comp.b ? comp.a : comp.b;
+          const bigWord = NUMBER_WORDS[bigger] || String(bigger);
+          spokenText = `${bigWord} is the bigger number!`;
+        }
+        this.audio?.speakFallback(spokenText);
+        this.flameMeter.addCharge(1);
+
+        const encClip = clipManager.pick('encouragement');
+        if (encClip) {
+          this.gameContext.events.emit({ type: 'play-video', src: encClip.src });
+        }
+
+        setTimeout(() => {
+          this.startCelebrate();
+        }, 600);
+      } else {
+        // Let them try again
+        this.compareAnswered = false;
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Rendering: Comparison Mode
+  // ---------------------------------------------------------------------------
+
+  private renderComparison(ctx: CanvasRenderingContext2D): void {
+    if (!this.currentComparison) return;
+
+    const comp = this.currentComparison;
+    const centerX = DESIGN_WIDTH / 2;
+
+    // Title: "Which side has MORE?" etc.
+    if (this.phase === 'prompt' || this.phase === 'compare-ask') {
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = 'bold 64px Fredoka, Nunito, sans-serif';
+
+      const questionWord = this.compareQuestion === 'more' ? 'MORE' : this.compareQuestion === 'less' ? 'LESS' : 'the SAME';
+      const titleText = `Which side has ${questionWord}?`;
+      const titleY = 120;
+
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+      ctx.fillText(titleText, centerX + 3, titleY + 3);
+
+      ctx.save();
+      ctx.shadowColor = '#37B1E2';
+      ctx.shadowBlur = 20;
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillText(titleText, centerX, titleY);
+      ctx.restore();
+      ctx.restore();
+    }
+
+    // "VS" text in center
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = 'bold 80px Fredoka, Nunito, sans-serif';
+    const vsAlpha = 0.6 + 0.2 * Math.sin(this.numberGlowPhase * 2);
+    ctx.globalAlpha = vsAlpha;
+    ctx.fillStyle = '#FFD700';
+    ctx.shadowColor = '#FFD700';
+    ctx.shadowBlur = 15;
+    ctx.fillText('VS', centerX, COMPARE_GROUP_Y);
+    ctx.restore();
+
+    // Left group fireballs
+    this.renderFireballCluster(ctx, this.compareLeftPositions, '#37B1E2');
+
+    // Right group fireballs
+    this.renderFireballCluster(ctx, this.compareRightPositions, '#FF6B35');
+
+    // Numbers below each group
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = 'bold 72px Fredoka, Nunito, sans-serif';
+
+    // Left number
+    ctx.save();
+    ctx.shadowColor = '#37B1E2';
+    ctx.shadowBlur = 15;
+    ctx.fillStyle = '#37B1E2';
+    ctx.fillText(String(comp.a), COMPARE_LEFT_X, COMPARE_GROUP_Y + 120);
+    ctx.restore();
+
+    // Right number
+    ctx.save();
+    ctx.shadowColor = '#FF6B35';
+    ctx.shadowBlur = 15;
+    ctx.fillStyle = '#FF6B35';
+    ctx.fillText(String(comp.b), COMPARE_RIGHT_X, COMPARE_GROUP_Y + 120);
+    ctx.restore();
+
+    ctx.restore();
+
+    // Choice buttons
+    if (this.phase === 'compare-ask' || (this.phase === 'celebrate' && this.mode === 'comparison')) {
+      for (const btn of this.compareButtons) {
+        ctx.save();
+
+        const highlighted = this.compareAnswered && btn.correct;
+        const isWrong = this.compareAnswered && !btn.correct;
+
+        // Button background (rounded rect)
+        const radius = 18;
+        const bx = btn.x - btn.w / 2;
+        const by = btn.y - btn.h / 2;
+
+        ctx.beginPath();
+        ctx.moveTo(bx + radius, by);
+        ctx.lineTo(bx + btn.w - radius, by);
+        ctx.quadraticCurveTo(bx + btn.w, by, bx + btn.w, by + radius);
+        ctx.lineTo(bx + btn.w, by + btn.h - radius);
+        ctx.quadraticCurveTo(bx + btn.w, by + btn.h, bx + btn.w - radius, by + btn.h);
+        ctx.lineTo(bx + radius, by + btn.h);
+        ctx.quadraticCurveTo(bx, by + btn.h, bx, by + btn.h - radius);
+        ctx.lineTo(bx, by + radius);
+        ctx.quadraticCurveTo(bx, by, bx + radius, by);
+        ctx.closePath();
+
+        if (highlighted) {
+          ctx.fillStyle = '#37B1E2';
+          ctx.shadowColor = '#37B1E2';
+          ctx.shadowBlur = 25;
+        } else if (isWrong) {
+          ctx.globalAlpha = 0.3;
+          ctx.fillStyle = '#444455';
+        } else {
+          ctx.fillStyle = '#1a3a6e';
+          ctx.shadowColor = 'rgba(55, 177, 226, 0.3)';
+          ctx.shadowBlur = 10;
+        }
+        ctx.fill();
+
+        ctx.strokeStyle = highlighted ? '#FFFFFF' : 'rgba(255, 255, 255, 0.4)';
+        ctx.lineWidth = highlighted ? 4 : 3;
+        ctx.stroke();
+
+        ctx.shadowBlur = 0;
+
+        // Label text
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = 'bold 28px Fredoka, Nunito, sans-serif';
+        ctx.fillStyle = highlighted ? '#FFFFFF' : isWrong ? '#666677' : '#FFFFFF';
+        ctx.fillText(btn.label, btn.x, btn.y);
+
+        ctx.restore();
+      }
+    }
+  }
+
+  /** Render a cluster of fireballs at given positions */
+  private renderFireballCluster(
+    ctx: CanvasRenderingContext2D,
+    positions: { x: number; y: number }[],
+    baseColor: string,
+  ): void {
+    for (const pos of positions) {
+      ctx.save();
+
+      const pulse = 1 + 0.04 * Math.sin(this.numberGlowPhase * 3 + pos.x * 0.01);
+      const r = COMPARE_FIREBALL_R * pulse;
+
+      // Outer glow
+      ctx.save();
+      ctx.shadowColor = baseColor;
+      ctx.shadowBlur = 18;
+
+      const grad = ctx.createRadialGradient(
+        pos.x, pos.y - r * 0.2, r * 0.1,
+        pos.x, pos.y, r,
+      );
+      grad.addColorStop(0, '#FFFFFF');
+      grad.addColorStop(0.3, baseColor === '#37B1E2' ? '#91CCEC' : '#FFB088');
+      grad.addColorStop(0.7, baseColor);
+      grad.addColorStop(1, baseColor === '#37B1E2' ? '#1a5fc4' : '#CC4400');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // Inner flame icon
+      ctx.save();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.globalAlpha = 0.7;
+      ctx.beginPath();
+      ctx.moveTo(pos.x, pos.y - r * 0.5);
+      ctx.quadraticCurveTo(pos.x + r * 0.25, pos.y - r * 0.1, pos.x + r * 0.15, pos.y + r * 0.2);
+      ctx.quadraticCurveTo(pos.x, pos.y + r * 0.05, pos.x - r * 0.15, pos.y + r * 0.2);
+      ctx.quadraticCurveTo(pos.x - r * 0.25, pos.y - r * 0.1, pos.x, pos.y - r * 0.5);
+      ctx.fill();
+      ctx.restore();
+
+      // Outline
+      ctx.strokeStyle = '#0d2d5e';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.restore();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Rendering: Number Line (Kian)
+  // ---------------------------------------------------------------------------
+
+  private renderNumberLine(ctx: CanvasRenderingContext2D): void {
+    ctx.save();
+
+    const spacing = (NUMLINE_X_END - NUMLINE_X_START) / (NUMLINE_COUNT - 1);
+
+    // Background line
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(NUMLINE_X_START, NUMLINE_Y);
+    ctx.lineTo(NUMLINE_X_END, NUMLINE_Y);
+    ctx.stroke();
+
+    // Markers
+    for (let i = 0; i < NUMLINE_COUNT; i++) {
+      const num = i + 1;
+      const mx = NUMLINE_X_START + i * spacing;
+
+      ctx.save();
+
+      const isTarget = num === this.numberLineTarget;
+      const isLit = num <= this.numberLineLit;
+      const isSecondary = this.numberLineSecondary > 0 && num <= this.numberLineSecondary;
+      const isCompareA = this.mode === 'comparison' && this.currentComparison && num === this.currentComparison.a;
+      const isCompareB = this.mode === 'comparison' && this.currentComparison && num === this.currentComparison.b;
+
+      // Pulsing gold glow on target
+      if (isTarget) {
+        const pulse = 0.5 + 0.5 * Math.sin(this.numberGlowPhase * 4);
+        ctx.save();
+        ctx.shadowColor = '#FFD700';
+        ctx.shadowBlur = 20 + 10 * pulse;
+        ctx.strokeStyle = '#FFD700';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(mx, NUMLINE_Y, NUMLINE_MARKER_R + 5, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Marker circle
+      ctx.beginPath();
+      ctx.arc(mx, NUMLINE_Y, NUMLINE_MARKER_R, 0, Math.PI * 2);
+
+      if (isCompareA && isCompareB) {
+        // Both numbers same — show split gradient
+        ctx.fillStyle = '#37B1E2';
+        ctx.fill();
+        ctx.strokeStyle = '#FF6B35';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      } else if (isCompareA) {
+        ctx.fillStyle = '#37B1E2';
+        ctx.fill();
+        ctx.strokeStyle = '#0d2d5e';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      } else if (isCompareB) {
+        ctx.fillStyle = '#FF6B35';
+        ctx.fill();
+        ctx.strokeStyle = '#0d2d5e';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      } else if (isLit) {
+        // Lit marker (counting progress)
+        ctx.fillStyle = '#37B1E2';
+        ctx.fill();
+        ctx.strokeStyle = '#0d2d5e';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      } else if (isSecondary && this.mode !== 'comparison') {
+        // Secondary highlight (addition sum, etc.)
+        ctx.fillStyle = 'rgba(55, 177, 226, 0.3)';
+        ctx.fill();
+        ctx.strokeStyle = '#37B1E2';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      } else {
+        // Unlit marker
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(55, 177, 226, 0.5)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      // Number below marker
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.font = 'bold 22px Fredoka, Nunito, sans-serif';
+
+      const numColor = isTarget ? '#FFD700'
+        : (isLit || isCompareA) ? '#37B1E2'
+        : isCompareB ? '#FF6B35'
+        : 'rgba(255, 255, 255, 0.5)';
+      ctx.fillStyle = numColor;
+      ctx.fillText(String(num), mx, NUMLINE_Y + NUMLINE_MARKER_R + 6);
+
+      ctx.restore();
     }
 
     ctx.restore();

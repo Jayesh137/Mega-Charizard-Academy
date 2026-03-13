@@ -56,6 +56,46 @@ const BTN_Y = DESIGN_HEIGHT * 0.78;
 // Hub Screen
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Star milestone thresholds
+// ---------------------------------------------------------------------------
+
+const STAR_MILESTONES: { threshold: number; label: string }[] = [
+  { threshold: 5,  label: 'Super Trainer!' },
+  { threshold: 10, label: 'Mega Trainer!' },
+  { threshold: 20, label: 'Champion!' },
+  { threshold: 50, label: 'Pokémon Master!' },
+];
+
+// ---------------------------------------------------------------------------
+// Draw a 5-pointed star (canvas path helper)
+// ---------------------------------------------------------------------------
+
+function drawStar(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  outerRadius: number,
+  color: string,
+): void {
+  const innerRadius = outerRadius * 0.4;
+  const points = 5;
+  ctx.save();
+  ctx.beginPath();
+  for (let i = 0; i < points * 2; i++) {
+    const r = i % 2 === 0 ? outerRadius : innerRadius;
+    const angle = (Math.PI / points) * i - Math.PI / 2;
+    const x = cx + r * Math.cos(angle);
+    const y = cy + r * Math.sin(angle);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.restore();
+}
+
 export class HubScreen implements GameScreen {
   private bg = new Background();
   private particles = new ParticlePool();
@@ -70,6 +110,14 @@ export class HubScreen implements GameScreen {
   private blocked: { reason: string; waitUntil?: number } | null = null;
   private voice: VoiceSystem | null = null;
 
+  // Star display state
+  private prevOwenStars = 0;
+  private prevKianStars = 0;
+  private owenStarPulse = 0;   // pulse animation timer (0 = idle)
+  private kianStarPulse = 0;
+  private milestoneText = '';
+  private milestoneTimer = 0;  // counts up; visible for 2s
+
   private get audio(): any { return (this.gameContext as any).audio; }
 
   enter(ctx: GameContext): void {
@@ -81,6 +129,12 @@ export class HubScreen implements GameScreen {
     this.evolveFlashAlpha = 0;
     this.wingFlutterTimer = 0;
     this.blocked = null;
+    this.milestoneText = '';
+    this.milestoneTimer = 0;
+    this.prevOwenStars = session.owenStars;
+    this.prevKianStars = session.kianStars;
+    this.owenStarPulse = 0;
+    this.kianStarPulse = 0;
     // Cache VoiceSystem — only create once
     const audio = (ctx as any).audio;
     if (audio && !this.voice) {
@@ -176,6 +230,27 @@ export class HubScreen implements GameScreen {
       }
     }
 
+    // Star pulse animations (decay toward 0)
+    if (this.owenStarPulse > 0) this.owenStarPulse = Math.max(0, this.owenStarPulse - dt);
+    if (this.kianStarPulse > 0) this.kianStarPulse = Math.max(0, this.kianStarPulse - dt);
+
+    // Detect star count changes and trigger pulse + milestone check
+    if (session.owenStars !== this.prevOwenStars) {
+      this.owenStarPulse = 0.4;
+      this.checkMilestone(session.owenStars, this.prevOwenStars, 'Owen');
+      this.prevOwenStars = session.owenStars;
+    }
+    if (session.kianStars !== this.prevKianStars) {
+      this.kianStarPulse = 0.4;
+      this.checkMilestone(session.kianStars, this.prevKianStars, 'Kian');
+      this.prevKianStars = session.kianStars;
+    }
+
+    // Milestone text timer
+    if (this.milestoneTimer > 0) {
+      this.milestoneTimer = Math.max(0, this.milestoneTimer - dt);
+    }
+
     // Ambient flame particles — intensity based on evolution stage
     const stageIdx = this.stageIndex(session.evolutionStage);
     const flameRate = 0.10 + stageIdx * 0.08;
@@ -251,6 +326,15 @@ export class HubScreen implements GameScreen {
     ctx.textAlign = 'center';
     ctx.fillText(STAGE_NAMES[stage], DESIGN_WIDTH / 2, 155);
     ctx.restore();
+
+    // Star counters (top-left Owen, top-right Kian)
+    this.drawStarCounter(ctx, 'Owen', session.owenStars, 60, 190, this.owenStarPulse);
+    this.drawStarCounter(ctx, 'Kian', session.kianStars, DESIGN_WIDTH - 60, 190, this.kianStarPulse);
+
+    // Milestone celebration text (center)
+    if (this.milestoneTimer > 0 && this.milestoneText) {
+      this.drawMilestoneText(ctx);
+    }
 
     // Evolution meter bar
     this.drawEvolutionMeter(ctx);
@@ -594,6 +678,107 @@ export class HubScreen implements GameScreen {
       ctx.shadowBlur = 30;
       ctx.fillText(`${STAGE_NAMES[this.justEvolvedTo]}!`, DESIGN_WIDTH / 2, DESIGN_HEIGHT * 0.25);
       ctx.restore();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Star counter display
+  // ---------------------------------------------------------------------------
+
+  private drawStarCounter(
+    ctx: CanvasRenderingContext2D,
+    name: string,
+    count: number,
+    anchorX: number,
+    anchorY: number,
+    pulse: number,
+  ): void {
+    const isLeft = anchorX < DESIGN_WIDTH / 2;
+    const textAlign = isLeft ? 'left' as const : 'right' as const;
+
+    ctx.save();
+
+    // Scale pulse when stars change (0.4 → 0)
+    const pulseScale = 1 + 0.15 * Math.sin((pulse / 0.4) * Math.PI);
+
+    // Name label
+    ctx.fillStyle = '#CCCCDD';
+    ctx.font = 'bold 36px Fredoka, Nunito, sans-serif';
+    ctx.textAlign = textAlign;
+    ctx.fillText(name, anchorX, anchorY);
+
+    // Star icon + count — positioned below the name
+    const starY = anchorY + 40;
+    const starIconX = isLeft ? anchorX + 18 : anchorX - 18;
+
+    // Gold glow behind star icon
+    ctx.save();
+    ctx.shadowColor = '#FFD700';
+    ctx.shadowBlur = 12;
+    ctx.translate(starIconX, starY);
+    ctx.scale(pulseScale, pulseScale);
+    ctx.translate(-starIconX, -starY);
+    drawStar(ctx, starIconX, starY, 18, '#FFD700');
+    ctx.restore();
+
+    // Count number
+    const countX = isLeft ? starIconX + 32 : starIconX - 32;
+    ctx.save();
+    ctx.translate(countX, starY);
+    ctx.scale(pulseScale, pulseScale);
+    ctx.translate(-countX, -starY);
+    ctx.fillStyle = '#FFD700';
+    ctx.font = 'bold 48px Fredoka, Nunito, sans-serif';
+    ctx.textAlign = isLeft ? 'left' : 'right';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = 'rgba(255, 215, 0, 0.4)';
+    ctx.shadowBlur = 8;
+    ctx.fillText(String(count), countX, starY);
+    ctx.restore();
+
+    ctx.restore();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Milestone celebration text (center of screen)
+  // ---------------------------------------------------------------------------
+
+  private drawMilestoneText(ctx: CanvasRenderingContext2D): void {
+    // 2s total: 0.3s fade-in, hold, 0.3s fade-out
+    const total = 2.0;
+    const elapsed = total - this.milestoneTimer;
+    let alpha: number;
+    if (elapsed < 0.3) {
+      alpha = elapsed / 0.3;
+    } else if (this.milestoneTimer < 0.3) {
+      alpha = this.milestoneTimer / 0.3;
+    } else {
+      alpha = 1.0;
+    }
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#FFD700';
+    ctx.font = 'bold 64px Fredoka, Nunito, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = '#FFD700';
+    ctx.shadowBlur = 30;
+    ctx.fillText(this.milestoneText, DESIGN_WIDTH / 2, DESIGN_HEIGHT * 0.30);
+    ctx.restore();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Check for milestone crossing
+  // ---------------------------------------------------------------------------
+
+  private checkMilestone(newCount: number, oldCount: number, childName: string): void {
+    for (const m of STAR_MILESTONES) {
+      if (newCount >= m.threshold && oldCount < m.threshold) {
+        this.milestoneText = `${childName}: ${m.label}`;
+        this.milestoneTimer = 2.0;
+        break; // show only the first crossed milestone
+      }
     }
   }
 }

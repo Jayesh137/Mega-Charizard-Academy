@@ -1,17 +1,21 @@
 // src/engine/games/flame-colors.ts
-// Mini-game 1: Dragon Gem Hunt — Color Recognition, Mixing & Shade Matching
+// Mini-game 1: Dragon Gem Hunt — Color Recognition, Mixing, Shade, Pattern & Sorting
 //
 // MCX sprite hovers in the top-right corner. Colored gem targets appear on screen.
 // Voice says "Red. Find red!" — player taps the matching gem.
 // Educational voice follows the Three-Label Rule throughout.
 //
 // Modes:
-//   'find'   — classic color recognition (tap the named gem)
-//   'mixing' — two gems merge to reveal a secondary color, kid picks result (every 3rd prompt)
-//   'shade'  — light/dark shade variants shown, kid picks the named shade (every 4th prompt)
+//   'find'    — classic color recognition (tap the named gem)
+//   'mixing'  — two gems merge to reveal a secondary color, kid picks result
+//   'shade'   — light/dark shade variants shown, kid picks the named shade
+//   'pattern' — what-color-comes-next sequence (ABAB, AABB, ABC)
+//   'sorting' — find ALL gems of one color (Owen only, categorization)
 //
 // Owen (2.5yo): 2 choices, primary colors, 200px gems, stable positions, glow hints
+//   promptIndex % 6: 0=find, 1=find, 2=mixing, 3=shade, 4=pattern, 5=sorting
 // Kian (4yo):   3-4 choices, extended palette, 160px gems, gentle drift, speed rounds
+//   promptIndex % 5: 0=find, 1=find, 2=mixing, 3=shade, 4=pattern
 //
 // Systems: SpriteAnimator, VoiceSystem, HintLadder, tracker, FlameMeter
 
@@ -30,8 +34,10 @@ import {
   colorDifficulty,
   colorMixing,
   colorShades,
+  colorPatterns,
   type ColorItem,
   type ColorMixPair,
+  type ColorPattern,
 } from '../../content/colors';
 import {
   DESIGN_WIDTH,
@@ -69,9 +75,20 @@ const MIXING_MERGE_DURATION = 1.5;  // seconds for gems to slide together
 const MIXING_FLASH_DURATION = 0.3;  // flash/burst overlay
 const MIXING_REVEAL_DURATION = 0.5; // result gem scale-in
 
-/** Choice button dimensions (mixing & shade modes) */
+/** Choice button dimensions (mixing, shade & pattern modes) */
 const BTN_W = 280;
 const BTN_H = 100;
+
+/** Pattern mode: circle diameter + spacing */
+const PATTERN_CIRCLE_R = 40;   // 80px diameter
+const PATTERN_GAP = 160;       // space between circle centers
+
+/** Sorting mode: collection zone dimensions */
+const SORT_ZONE_X = 140;       // center of collection zone
+const SORT_ZONE_Y = 540;       // center Y
+const SORT_ZONE_W = 220;
+const SORT_ZONE_H = 500;
+const SORT_SLIDE_DURATION = 0.5; // seconds for gem to slide into zone
 
 // ---------------------------------------------------------------------------
 // Types
@@ -101,7 +118,7 @@ interface ChoiceButton {
   shakeTimer: number;
 }
 
-type PromptMode = 'find' | 'mixing' | 'shade';
+type PromptMode = 'find' | 'mixing' | 'shade' | 'pattern' | 'sorting';
 
 type GamePhase =
   | 'banner'
@@ -113,6 +130,16 @@ type GamePhase =
   | 'mixing-reveal'    // result gem appears, then choice
   | 'celebrate'
   | 'next';
+
+/** A gem in sorting mode with slide-animation state */
+interface SortingGem extends GemTarget {
+  isTarget: boolean;      // should be collected?
+  collected: boolean;     // already in collection zone?
+  slideTimer: number;     // 0..SORT_SLIDE_DURATION while sliding
+  slideStartX: number;    // original X when slide started
+  slideStartY: number;    // original Y when slide started
+  slotIndex: number;      // stacking position in collection zone
+}
 
 // ---------------------------------------------------------------------------
 // FlameColorsGame (Dragon Gem Hunt)
@@ -158,10 +185,23 @@ export class FlameColorsGame implements GameScreen {
   private shadeTarget: 'light' | 'dark' = 'light';
   private shadeBaseColor = '';
 
-  // Choice buttons (used in mixing + shade modes)
+  // Choice buttons (used in mixing, shade & pattern modes)
   private choices: ChoiceButton[] = [];
   private choiceAnswered = false;
   private choiceFlashTimer = 0;
+
+  // Pattern mode state
+  private patternData: ColorPattern | null = null;
+  private patternAnswerScale = 0;         // 0→1.1→1.0 reveal animation
+  private patternAnswerRevealing = false;
+
+  // Sorting mode state
+  private sortingGems: SortingGem[] = [];
+  private sortingTargetColor = '';         // e.g. 'red'
+  private sortingTargetHex = '';
+  private sortingTargetTotal = 0;          // how many target gems exist
+  private sortingCollected = 0;            // how many collected so far
+  private sortingWrongTaps = 0;            // wrong-tap counter for scoring
 
   // Audio shortcut
   private get audio() { return this.gameContext.audio; }
@@ -178,18 +218,28 @@ export class FlameColorsGame implements GameScreen {
 
   /**
    * Decide mode for current promptIndex.
-   * Every 3rd prompt (index 2, 5, 8...): mixing
-   * Every 4th prompt (index 3, 7, 11...): shade (but skip if mixing just happened)
-   * Otherwise: find
+   *
+   * Owen (little) — cycle of 6:
+   *   0=find, 1=find, 2=mixing, 3=shade, 4=pattern, 5=sorting
+   *
+   * Kian (big) — cycle of 5:
+   *   0=find, 1=find, 2=mixing, 3=shade, 4=pattern
    */
   private pickMode(): PromptMode {
-    if (this.promptIndex % 3 === 2) {
-      return 'mixing';
+    if (this.isOwen) {
+      const slot = this.promptIndex % 6;
+      if (slot === 2) return 'mixing';
+      if (slot === 3) return 'shade';
+      if (slot === 4) return 'pattern';
+      if (slot === 5) return 'sorting';
+      return 'find';
+    } else {
+      const slot = this.promptIndex % 5;
+      if (slot === 2) return 'mixing';
+      if (slot === 3) return 'shade';
+      if (slot === 4) return 'pattern';
+      return 'find';
     }
-    if (this.promptIndex % 4 === 3) {
-      return 'shade';
-    }
-    return 'find';
   }
 
   // -----------------------------------------------------------------------
@@ -251,6 +301,19 @@ export class FlameColorsGame implements GameScreen {
     this.mixFlashAlpha = 0;
     this.mixResultScale = 0;
 
+    // Reset pattern state
+    this.patternData = null;
+    this.patternAnswerScale = 0;
+    this.patternAnswerRevealing = false;
+
+    // Reset sorting state
+    this.sortingGems = [];
+    this.sortingTargetColor = '';
+    this.sortingTargetHex = '';
+    this.sortingCollected = 0;
+    this.sortingWrongTaps = 0;
+    this.sortingTargetTotal = 0;
+
     // Show banner overlay
     this.gameContext.events.emit({ type: 'show-banner', turn });
 
@@ -279,6 +342,10 @@ export class FlameColorsGame implements GameScreen {
       this.startMixingAnimate();
     } else if (this.mode === 'shade') {
       this.startShadePrompt();
+    } else if (this.mode === 'pattern') {
+      this.startPatternPrompt();
+    } else if (this.mode === 'sorting') {
+      this.startSortingPrompt();
     } else {
       this.startFindPrompt();
     }
@@ -505,6 +572,339 @@ export class FlameColorsGame implements GameScreen {
         this.startPlay();
       }
     }, 800);
+  }
+
+  // ===================== PATTERN MODE =====================================
+
+  private startPatternPrompt(): void {
+    this.phase = 'prompt';
+    this.phaseTimer = 0;
+
+    // Pick a pattern — Owen: only primary-color patterns; Kian: all
+    const available = this.isOwen
+      ? colorPatterns.filter(p =>
+          p.sequence.every(c => primaryColors.some(pc => pc.name === c)) &&
+          primaryColors.some(pc => pc.name === p.answer),
+        )
+      : colorPatterns;
+
+    this.patternData = available[Math.floor(Math.random() * available.length)];
+    this.patternAnswerScale = 0;
+    this.patternAnswerRevealing = false;
+
+    // Set currentColor for celebration particles
+    const answerItem = allColors.find(c => c.name === this.patternData!.answer);
+    this.currentColor = answerItem ?? primaryColors[0];
+
+    // Build choice buttons: correct answer + distractors
+    const choiceCount = this.isOwen ? 2 : 3;
+    this.choices = [];
+    this.choiceAnswered = false;
+    this.choiceFlashTimer = 0;
+
+    // Correct choice
+    this.choices.push({
+      label: this.patternData.answer.toUpperCase(),
+      colorHex: this.currentColor.hex,
+      correct: true,
+      x: 0, y: 0,
+      shakeTimer: 0,
+    });
+
+    // Wrong choices: colors not in the answer
+    const wrongPool = (this.isOwen ? primaryColors : allColors).filter(
+      c => c.name !== this.patternData!.answer,
+    );
+    const shuffledWrong = [...wrongPool].sort(() => Math.random() - 0.5);
+    for (let i = 0; i < choiceCount - 1 && i < shuffledWrong.length; i++) {
+      this.choices.push({
+        label: shuffledWrong[i].name.toUpperCase(),
+        colorHex: shuffledWrong[i].hex,
+        correct: false,
+        x: 0, y: 0,
+        shakeTimer: 0,
+      });
+    }
+
+    // Shuffle & position
+    this.choices.sort(() => Math.random() - 0.5);
+    this.positionChoices();
+
+    // Initialize hint ladder
+    this.hintLadder.startPrompt(this.patternData.answer);
+
+    // Voice: "What color comes next?"
+    this.voice?.narrate('What color comes next?');
+    this.audio?.playSynth('pop');
+
+    // Transition to play
+    setTimeout(() => {
+      if (this.phase === 'prompt') {
+        this.startPlay();
+      }
+    }, 800);
+  }
+
+  private handlePatternChoiceClick(x: number, y: number): void {
+    if (this.choiceAnswered) return;
+
+    for (const choice of this.choices) {
+      if (!this.isChoiceHit(choice, x, y)) continue;
+
+      if (choice.correct) {
+        this.choiceAnswered = true;
+        this.inputLocked = true;
+
+        const answerName = this.patternData!.answer;
+        tracker.recordAnswer(answerName, 'color', true);
+
+        const hinted = this.hintLadder.hintLevel > 0;
+        this.flameMeter.addCharge(hinted ? 1 : 2);
+        this.consecutiveCorrect++;
+
+        this.audio?.playSynth('correct-chime');
+        this.voice?.ashCorrect();
+        this.voice?.crossReinforcColor(answerName);
+
+        // Animate the answer circle filling in
+        this.patternAnswerRevealing = true;
+        this.patternAnswerScale = 0;
+
+        // Particles at the choice button
+        this.particles.burst(
+          choice.x + BTN_W / 2, choice.y + BTN_H / 2,
+          30, choice.colorHex, 150, 0.8,
+        );
+      } else {
+        const answerName = this.patternData!.answer;
+        tracker.recordAnswer(answerName, 'color', false);
+        this.consecutiveCorrect = 0;
+
+        this.audio?.playSynth('wrong-bonk');
+        choice.shakeTimer = 0.4;
+        this.voice?.ashWrong();
+
+        this.hintLadder.onMiss();
+
+        this.particles.burst(
+          choice.x + BTN_W / 2, choice.y + BTN_H / 2,
+          6, '#ff6666', 40, 0.3,
+        );
+
+        if (this.hintLadder.autoCompleted) {
+          this.autoCompletePattern();
+        }
+      }
+      return;
+    }
+  }
+
+  private autoCompletePattern(): void {
+    this.choiceAnswered = true;
+    this.inputLocked = true;
+
+    const answerName = this.patternData?.answer ?? '';
+    tracker.recordAnswer(answerName, 'color', true);
+    this.flameMeter.addCharge(0.5);
+    this.audio?.playSynth('pop');
+
+    this.patternAnswerRevealing = true;
+    this.patternAnswerScale = 0;
+
+    const encClip = clipManager.pick('encouragement');
+    if (encClip) {
+      this.gameContext.events.emit({ type: 'play-video', src: encClip.src });
+    }
+  }
+
+  // ===================== SORTING MODE (Owen only) ==========================
+
+  private startSortingPrompt(): void {
+    this.phase = 'prompt';
+    this.phaseTimer = 0;
+
+    // Pick two primary colors
+    const shuffledColors = [...primaryColors].sort(() => Math.random() - 0.5);
+    const targetItem = shuffledColors[0];
+    const otherItem = shuffledColors[1];
+
+    this.sortingTargetColor = targetItem.name;
+    this.sortingTargetHex = targetItem.hex;
+    this.currentColor = targetItem;
+
+    // Create 5 gems: 3 target + 2 other
+    const radius = GEM_RADIUS_OWEN;
+    this.sortingGems = [];
+    this.sortingCollected = 0;
+    this.sortingWrongTaps = 0;
+    this.sortingTargetTotal = 3;
+
+    for (let i = 0; i < 3; i++) {
+      this.sortingGems.push(this.makeSortingGem(targetItem, radius, true));
+    }
+    for (let i = 0; i < 2; i++) {
+      this.sortingGems.push(this.makeSortingGem(otherItem, radius, false));
+    }
+
+    // Shuffle and scatter in center/right area
+    this.sortingGems.sort(() => Math.random() - 0.5);
+    this.positionSortingGems();
+
+    // Initialize hint ladder
+    this.hintLadder.startPrompt(this.sortingTargetColor);
+
+    // Voice: "Find ALL the RED ones!"
+    this.voice?.narrate(`Find ALL the ${targetItem.name} ones!`);
+    this.audio?.playSynth('pop');
+
+    // Transition to play
+    setTimeout(() => {
+      if (this.phase === 'prompt') {
+        this.startPlay();
+      }
+    }, 800);
+  }
+
+  private makeSortingGem(item: ColorItem, radius: number, isTarget: boolean): SortingGem {
+    return {
+      x: 0, y: 0,
+      color: item.hex,
+      colorName: item.name,
+      radius,
+      alive: true,
+      dimmed: false,
+      bobPhase: randomRange(0, Math.PI * 2),
+      sparklePhase: randomRange(0, Math.PI * 2),
+      vx: 0,
+      vy: 0,
+      isTarget,
+      collected: false,
+      slideTimer: 0,
+      slideStartX: 0,
+      slideStartY: 0,
+      slotIndex: 0,
+    };
+  }
+
+  private positionSortingGems(): void {
+    // Scatter gems in center/right area (leave left side for collection zone)
+    const areaLeft = 400;
+    const areaRight = DESIGN_WIDTH - 200;
+    const areaTop = DESIGN_HEIGHT * 0.25;
+    const areaBottom = DESIGN_HEIGHT * 0.75;
+
+    // Use fixed slots to avoid overlap
+    const slots = [
+      { x: 600,  y: 350 },
+      { x: 1000, y: 300 },
+      { x: 1400, y: 380 },
+      { x: 800,  y: 620 },
+      { x: 1200, y: 650 },
+    ];
+
+    for (let i = 0; i < this.sortingGems.length; i++) {
+      const gem = this.sortingGems[i];
+      const slot = slots[i % slots.length];
+      gem.x = slot.x + randomRange(-60, 60);
+      gem.y = slot.y + randomRange(-40, 40);
+      // Clamp to valid area
+      gem.x = Math.max(areaLeft, Math.min(areaRight, gem.x));
+      gem.y = Math.max(areaTop, Math.min(areaBottom, gem.y));
+    }
+  }
+
+  private handleSortingClick(x: number, y: number): void {
+    for (const gem of this.sortingGems) {
+      if (gem.collected || !gem.alive) continue;
+      if (!this.isGemHit(gem, x, y)) continue;
+
+      if (gem.isTarget) {
+        // Correct tap: collect this gem
+        gem.collected = true;
+        gem.slideStartX = gem.x;
+        gem.slideStartY = gem.y;
+        gem.slideTimer = 0;
+        gem.slotIndex = this.sortingCollected;
+        this.sortingCollected++;
+
+        this.audio?.playSynth('correct-chime');
+        this.particles.burst(gem.x, gem.y, 25, gem.color, 150, 0.8);
+        this.particles.burst(gem.x, gem.y, 10, '#ffffff', 80, 0.4);
+
+        // Check if all targets collected
+        if (this.sortingCollected >= this.sortingTargetTotal) {
+          this.inputLocked = true;
+
+          // Score based on wrong taps
+          const charge = this.sortingWrongTaps === 0 ? 3
+            : this.sortingWrongTaps <= 2 ? 2 : 1;
+          this.flameMeter.addCharge(charge);
+          this.consecutiveCorrect++;
+
+          tracker.recordAnswer(this.sortingTargetColor, 'color', true);
+
+          this.voice?.ashCorrect();
+          setTimeout(() => {
+            this.voice?.narrate(
+              `You found all the ${this.sortingTargetColor} ones! Amazing!`,
+            );
+          }, 600);
+          this.voice?.crossReinforcColor(this.sortingTargetColor);
+
+          // Delay celebrate to let slide animation finish
+          setTimeout(() => {
+            this.startCelebrate();
+          }, SORT_SLIDE_DURATION * 1000 + 200);
+        }
+      } else {
+        // Wrong color tapped
+        this.sortingWrongTaps++;
+        gem.dimmed = true;
+
+        this.audio?.playSynth('wrong-bonk');
+        this.voice?.ashWrong();
+
+        // Gentle shake: temporarily offset (handled in render via shakeTimer reuse)
+        // We just mark it dimmed and let the hint ladder escalate
+        this.hintLadder.onMiss();
+
+        this.particles.burst(gem.x, gem.y, 6, '#ff6666', 40, 0.3);
+
+        if (this.hintLadder.autoCompleted) {
+          this.autoCompleteSorting();
+        }
+      }
+      return;
+    }
+  }
+
+  private autoCompleteSorting(): void {
+    this.inputLocked = true;
+
+    // Collect all remaining target gems
+    for (const gem of this.sortingGems) {
+      if (gem.isTarget && !gem.collected) {
+        gem.collected = true;
+        gem.slideStartX = gem.x;
+        gem.slideStartY = gem.y;
+        gem.slideTimer = 0;
+        gem.slotIndex = this.sortingCollected;
+        this.sortingCollected++;
+      }
+    }
+
+    tracker.recordAnswer(this.sortingTargetColor, 'color', true);
+    this.flameMeter.addCharge(0.5);
+    this.audio?.playSynth('pop');
+
+    const encClip = clipManager.pick('encouragement');
+    if (encClip) {
+      this.gameContext.events.emit({ type: 'play-video', src: encClip.src });
+    }
+
+    setTimeout(() => {
+      this.startCelebrate();
+    }, SORT_SLIDE_DURATION * 1000 + 200);
   }
 
   // -----------------------------------------------------------------------
@@ -753,6 +1153,14 @@ export class FlameColorsGame implements GameScreen {
       this.autoCompleteMixing();
       return;
     }
+    if (this.mode === 'pattern') {
+      this.autoCompletePattern();
+      return;
+    }
+    if (this.mode === 'sorting') {
+      this.autoCompleteSorting();
+      return;
+    }
 
     const correctGem = this.mode === 'shade'
       ? this.gems.find(g => g.colorName === `${this.shadeTarget} ${this.shadeBaseColor}` && g.alive)
@@ -906,6 +1314,10 @@ export class FlameColorsGame implements GameScreen {
       case 'play':
         if (this.mode === 'mixing') {
           this.updateMixingChoice(dt);
+        } else if (this.mode === 'pattern') {
+          this.updatePatternPlay(dt);
+        } else if (this.mode === 'sorting') {
+          this.updateSortingPlay(dt);
         } else {
           this.updateGems(dt);
           this.updateHints(dt);
@@ -1092,6 +1504,94 @@ export class FlameColorsGame implements GameScreen {
     }
   }
 
+  // ===================== Pattern update ====================================
+
+  private updatePatternPlay(dt: number): void {
+    // Shake timers on choice buttons
+    for (const choice of this.choices) {
+      if (choice.shakeTimer > 0) {
+        choice.shakeTimer = Math.max(0, choice.shakeTimer - dt);
+      }
+    }
+
+    // Answer reveal animation
+    if (this.patternAnswerRevealing) {
+      this.patternAnswerScale = Math.min(
+        this.patternAnswerScale + dt / 0.4,  // 0.4s reveal
+        1.1,
+      );
+      // Settle from 1.1 → 1.0
+      if (this.patternAnswerScale >= 1.1) {
+        this.patternAnswerScale = 1.0;
+        this.patternAnswerRevealing = false;
+        // Particles at the answer circle position
+        const circleCount = this.patternData!.sequence.length + 1;
+        const totalW = (circleCount - 1) * PATTERN_GAP;
+        const answerX = (DESIGN_WIDTH - totalW) / 2 + (circleCount - 1) * PATTERN_GAP;
+        const answerY = DESIGN_HEIGHT * 0.4;
+        this.particles.burst(answerX, answerY, 35, this.currentColor?.hex ?? '#ffffff', 180, 1.0);
+        this.particles.burst(answerX, answerY, 15, '#ffffff', 100, 0.5);
+
+        // Transition to celebrate
+        setTimeout(() => {
+          this.startCelebrate();
+        }, 400);
+      }
+    }
+
+    // Hint escalation
+    if (!this.choiceAnswered) {
+      const escalated = this.hintLadder.update(dt);
+      if (escalated && this.hintLadder.hintLevel === 1) {
+        this.voice?.hintRepeat(this.patternData?.answer ?? '');
+      }
+      if (this.hintLadder.autoCompleted && !this.choiceAnswered) {
+        this.autoCompletePattern();
+      }
+    }
+  }
+
+  // ===================== Sorting update ====================================
+
+  private updateSortingPlay(dt: number): void {
+    // Update slide animations for collected gems
+    for (const gem of this.sortingGems) {
+      if (gem.collected && gem.slideTimer < SORT_SLIDE_DURATION) {
+        gem.slideTimer += dt;
+        const t = Math.min(gem.slideTimer / SORT_SLIDE_DURATION, 1.0);
+        // Smoothstep
+        const s = t * t * (3 - 2 * t);
+
+        // Slide toward collection zone slot
+        const destX = SORT_ZONE_X;
+        const destY = SORT_ZONE_Y - SORT_ZONE_H / 2 + 80 + gem.slotIndex * 130;
+
+        gem.x = gem.slideStartX + (destX - gem.slideStartX) * s;
+        gem.y = gem.slideStartY + (destY - gem.slideStartY) * s;
+        gem.radius = GEM_RADIUS_OWEN + (60 - GEM_RADIUS_OWEN) * s; // shrink to 60px radius in zone
+      }
+    }
+
+    // Bob animation for uncollected gems
+    for (const gem of this.sortingGems) {
+      if (!gem.collected) {
+        gem.bobPhase += dt * 1.5;
+        gem.sparklePhase += dt * 2.0;
+      }
+    }
+
+    // Hint escalation
+    if (!this.inputLocked) {
+      const escalated = this.hintLadder.update(dt);
+      if (escalated && this.hintLadder.hintLevel === 1) {
+        this.voice?.hintRepeat(this.sortingTargetColor);
+      }
+      if (this.hintLadder.autoCompleted) {
+        this.autoCompleteSorting();
+      }
+    }
+  }
+
   private updateCelebrate(dt: number): void {
     // Ambient celebration sparks
     const celebColor = this.currentColor?.hex ?? '#37B1E2';
@@ -1150,6 +1650,10 @@ export class FlameColorsGame implements GameScreen {
       this.phase === 'celebrate'
     )) {
       this.renderMixing(ctx);
+    } else if (this.mode === 'pattern' && (this.phase === 'prompt' || this.phase === 'play' || this.phase === 'celebrate')) {
+      this.renderPattern(ctx);
+    } else if (this.mode === 'sorting' && (this.phase === 'prompt' || this.phase === 'play' || this.phase === 'celebrate')) {
+      this.renderSorting(ctx);
     } else {
       // Draw gem targets (find mode or shade mode)
       for (const gem of this.gems) {
@@ -1269,7 +1773,9 @@ export class FlameColorsGame implements GameScreen {
     ctx.lineWidth = 5;
     ctx.lineJoin = 'round';
 
-    const question = 'What color did we make?';
+    const question = this.mode === 'pattern'
+      ? 'What color comes next?'
+      : 'What color did we make?';
     const questionY = DESIGN_HEIGHT * 0.72;
     ctx.strokeText(question, DESIGN_WIDTH / 2, questionY);
     ctx.fillStyle = '#FFFFFF';
@@ -1343,6 +1849,200 @@ export class FlameColorsGame implements GameScreen {
       ctx.fillText(choice.label, dx + BTN_W / 2 + 20, dy + BTN_H / 2);
 
       ctx.restore();
+    }
+  }
+
+  // ===================== Pattern render ====================================
+
+  private renderPattern(ctx: CanvasRenderingContext2D): void {
+    if (!this.patternData) return;
+
+    const seq = this.patternData.sequence;
+    const circleCount = seq.length + 1; // 4 pattern + 1 answer slot
+    const totalW = (circleCount - 1) * PATTERN_GAP;
+    const startX = (DESIGN_WIDTH - totalW) / 2;
+    const y = DESIGN_HEIGHT * 0.4;
+    const r = PATTERN_CIRCLE_R;
+
+    // Draw the 4 sequence circles
+    for (let i = 0; i < seq.length; i++) {
+      const cx = startX + i * PATTERN_GAP;
+      const colorItem = allColors.find(c => c.name === seq[i]);
+      const hex = colorItem?.hex ?? '#888888';
+
+      // Outer glow
+      const glow = ctx.createRadialGradient(cx, y, 0, cx, y, r * 1.5);
+      glow.addColorStop(0, hex + '88');
+      glow.addColorStop(1, hex + '00');
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(cx, y, r * 1.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Main circle with gradient
+      const grad = ctx.createRadialGradient(cx - r * 0.15, y - r * 0.15, 0, cx, y, r);
+      grad.addColorStop(0, '#ffffff');
+      grad.addColorStop(0.25, '#ffffffcc');
+      grad.addColorStop(0.6, hex);
+      grad.addColorStop(1, this.darkenColor(hex, 0.5));
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(cx, y, r, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Outline
+      ctx.strokeStyle = this.darkenColor(hex, 0.3);
+      ctx.lineWidth = 4;
+      ctx.stroke();
+    }
+
+    // Draw the "?" answer slot
+    const answerX = startX + seq.length * PATTERN_GAP;
+
+    if (this.choiceAnswered && this.patternAnswerScale > 0) {
+      // Reveal: fill with answer color, scaled
+      const answerHex = this.currentColor?.hex ?? '#ffffff';
+      const scale = this.patternAnswerScale;
+
+      ctx.save();
+      ctx.translate(answerX, y);
+      ctx.scale(scale, scale);
+      ctx.translate(-answerX, -y);
+
+      // Glow
+      const glow = ctx.createRadialGradient(answerX, y, 0, answerX, y, r * 1.5);
+      glow.addColorStop(0, answerHex + '88');
+      glow.addColorStop(1, answerHex + '00');
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(answerX, y, r * 1.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      const grad = ctx.createRadialGradient(answerX - r * 0.15, y - r * 0.15, 0, answerX, y, r);
+      grad.addColorStop(0, '#ffffff');
+      grad.addColorStop(0.25, '#ffffffcc');
+      grad.addColorStop(0.6, answerHex);
+      grad.addColorStop(1, this.darkenColor(answerHex, 0.5));
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(answerX, y, r, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = this.darkenColor(answerHex, 0.3);
+      ctx.lineWidth = 4;
+      ctx.stroke();
+
+      ctx.restore();
+    } else {
+      // Dashed circle outline with "?"
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+      ctx.lineWidth = 4;
+      ctx.setLineDash([10, 8]);
+      ctx.beginPath();
+      ctx.arc(answerX, y, r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Question mark
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 48px Fredoka, Nunito, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('?', answerX, y);
+      ctx.restore();
+    }
+
+    // Choice buttons below (during play phase)
+    if (this.phase === 'play') {
+      this.renderChoiceButtons(ctx);
+    }
+  }
+
+  // ===================== Sorting render ====================================
+
+  private renderSorting(ctx: CanvasRenderingContext2D): void {
+    // Collection zone (left side basket)
+    ctx.save();
+    const zoneLeft = SORT_ZONE_X - SORT_ZONE_W / 2;
+    const zoneTop = SORT_ZONE_Y - SORT_ZONE_H / 2;
+
+    // Basket background
+    ctx.fillStyle = 'rgba(20, 20, 50, 0.6)';
+    ctx.beginPath();
+    ctx.roundRect(zoneLeft, zoneTop, SORT_ZONE_W, SORT_ZONE_H, 20);
+    ctx.fill();
+
+    // Basket border — colored to match target
+    ctx.strokeStyle = this.sortingTargetHex + 'aa';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.roundRect(zoneLeft, zoneTop, SORT_ZONE_W, SORT_ZONE_H, 20);
+    ctx.stroke();
+
+    // Glow behind basket
+    const basketGlow = ctx.createRadialGradient(
+      SORT_ZONE_X, SORT_ZONE_Y, 20,
+      SORT_ZONE_X, SORT_ZONE_Y, SORT_ZONE_W,
+    );
+    basketGlow.addColorStop(0, this.sortingTargetHex + '22');
+    basketGlow.addColorStop(1, this.sortingTargetHex + '00');
+    ctx.fillStyle = basketGlow;
+    ctx.fillRect(zoneLeft - 40, zoneTop - 40, SORT_ZONE_W + 80, SORT_ZONE_H + 80);
+
+    ctx.restore();
+
+    // Progress text above collection zone
+    ctx.save();
+    ctx.font = 'bold 36px Fredoka, Nunito, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 4;
+    ctx.lineJoin = 'round';
+    const progressText = `${this.sortingCollected}/${this.sortingTargetTotal} found!`;
+    ctx.strokeText(progressText, SORT_ZONE_X, zoneTop - 30);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(progressText, SORT_ZONE_X, zoneTop - 30);
+    ctx.restore();
+
+    // Draw all sorting gems (collected ones slide into zone, uncollected bob in place)
+    for (const gem of this.sortingGems) {
+      if (!gem.alive) continue;
+      this.renderGem(ctx, gem);
+    }
+
+    // Hint level 2+: glow on uncollected target gems
+    if (this.phase === 'play' && this.hintLadder.hintLevel >= 2) {
+      for (const gem of this.sortingGems) {
+        if (gem.isTarget && !gem.collected && gem.alive) {
+          const yOffset = Math.sin(gem.bobPhase) * 6;
+          const pulse = 1 + Math.sin(gem.bobPhase * 3) * 0.15;
+          ctx.save();
+          ctx.shadowColor = '#37B1E2';
+          ctx.shadowBlur = 30 * pulse;
+          const haloGrad = ctx.createRadialGradient(
+            gem.x, gem.y + yOffset, gem.radius * 0.5,
+            gem.x, gem.y + yOffset, gem.radius * 1.8,
+          );
+          haloGrad.addColorStop(0, '#37B1E2' + '66');
+          haloGrad.addColorStop(1, '#37B1E2' + '00');
+          ctx.fillStyle = haloGrad;
+          ctx.beginPath();
+          ctx.arc(gem.x, gem.y + yOffset, gem.radius * 1.8 * pulse, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+    }
+
+    // Hint level 3: draw lines from sprite to uncollected target gems
+    if (this.phase === 'play' && this.hintLadder.hintLevel >= 3) {
+      for (const gem of this.sortingGems) {
+        if (gem.isTarget && !gem.collected && gem.alive) {
+          this.renderHintLine(ctx, gem);
+        }
+      }
     }
   }
 
@@ -1469,6 +2169,10 @@ export class FlameColorsGame implements GameScreen {
       text = `Find the ${this.shadeTarget.toUpperCase()} ${this.shadeBaseColor}!`;
     } else if (this.mode === 'mixing' && this.phase === 'play') {
       text = 'What color did we make?';
+    } else if (this.mode === 'pattern') {
+      text = 'What color comes next?';
+    } else if (this.mode === 'sorting') {
+      text = `Find ALL the ${this.sortingTargetColor} ones!`;
     } else {
       return;
     }
@@ -1537,6 +2241,16 @@ export class FlameColorsGame implements GameScreen {
 
     if (this.phase === 'play' && this.mode === 'shade') {
       this.handleShadeClick(x, y);
+      return;
+    }
+
+    if (this.phase === 'play' && this.mode === 'pattern') {
+      this.handlePatternChoiceClick(x, y);
+      return;
+    }
+
+    if (this.phase === 'play' && this.mode === 'sorting') {
+      this.handleSortingClick(x, y);
       return;
     }
 
