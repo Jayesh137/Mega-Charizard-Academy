@@ -278,6 +278,10 @@ export class EvolutionChallengeGame implements GameScreen {
     const turn = session.nextTurn();
     session.currentTurn = turn;
 
+    // Announce whose turn it is
+    if (turn === 'owen') this.voice?.playAshLine('turn_owen');
+    else if (turn === 'kian') this.voice?.playAshLine('turn_kian');
+
     this.phase = 'banner';
     this.phaseTimer = 0;
     this.inputLocked = true;
@@ -341,6 +345,9 @@ export class EvolutionChallengeGame implements GameScreen {
     this.phaseTimer = 0;
     this.inputLocked = false;
 
+    // Start response timer for ZPD tracking
+    tracker.startPromptTimer();
+
     if (this.promptMode === 'recognition' || this.promptMode === 'reverse') {
       // Initialize hint ladder with the correct answer name
       this.hintLadder.startPrompt(this.correctEntry?.name ?? '');
@@ -354,6 +361,9 @@ export class EvolutionChallengeGame implements GameScreen {
     this.phase = 'celebrate';
     this.phaseTimer = 0;
     this.inputLocked = true;
+
+    // Track prompt completion for clip spacing
+    clipManager.onPromptComplete();
 
     this.gameContext.events.emit({ type: 'celebration', intensity: 'normal' });
 
@@ -642,6 +652,10 @@ export class EvolutionChallengeGame implements GameScreen {
     const hinted = this.hintLadder.hintLevel > 0;
     this.flameMeter.addCharge(hinted ? 1 : 2);
 
+    // Streak announcements
+    if (tracker.consecutiveCorrect === 3) this.voice?.playAshLine('streak_3');
+    else if (tracker.consecutiveCorrect === 5) this.voice?.playAshLine('streak_5');
+
     this.audio?.playSynth('correct-chime');
     session.awardStar(1);
     session.recordAnswer(true);
@@ -655,6 +669,10 @@ export class EvolutionChallengeGame implements GameScreen {
     const burstColor = card.entry.color;
     this.particles.burst(card.x, card.y, 40, burstColor, 200, 1.0);
     this.particles.burst(card.x, card.y, 15, '#ffffff', 120, 0.5);
+
+    // Play the evolution voice line for the correctly identified Pokemon
+    const evoKey = `evo_${card.entry.name.toLowerCase().replace(/\s+/g, '')}`;
+    this.voice?.playAshLine(evoKey);
 
     // Voice the evolution relationship
     if (this.promptMode === 'recognition' && this.centerEntry) {

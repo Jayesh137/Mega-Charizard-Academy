@@ -298,6 +298,10 @@ export class PhonicsArenaGame implements GameScreen {
     const turn = session.nextTurn();
     session.currentTurn = turn;
 
+    // Announce whose turn it is
+    if (turn === 'owen') this.voice?.playAshLine('turn_owen');
+    else if (turn === 'kian') this.voice?.playAshLine('turn_kian');
+
     this.phase = 'banner';
     this.phaseTimer = 0;
     this.inputLocked = true;
@@ -534,6 +538,10 @@ export class PhonicsArenaGame implements GameScreen {
             : this.currentLetter!.letter;
           tracker.recordAnswer(correctConcept, 'letter', true);
           this.flameMeter.addCharge(2);
+
+          // Streak announcements
+          if (tracker.consecutiveCorrect === 3) this.voice?.playAshLine('streak_3');
+          else if (tracker.consecutiveCorrect === 5) this.voice?.playAshLine('streak_5');
 
           this.audio?.playSynth('correct-chime');
           this.audio?.playSynth('star-collect');
@@ -830,6 +838,11 @@ export class PhonicsArenaGame implements GameScreen {
 
     // Track correct answer
     tracker.recordAnswer(this.currentWord.word, 'letter', true);
+
+    // Streak announcements
+    if (tracker.consecutiveCorrect === 3) this.voice?.playAshLine('streak_3');
+    else if (tracker.consecutiveCorrect === 5) this.voice?.playAshLine('streak_5');
+
     session.recordSkillPractice('Phonics');
     session.recordCorrectConcept('Phonics', this.currentWord.word);
 
@@ -923,6 +936,9 @@ export class PhonicsArenaGame implements GameScreen {
 
     this.rhymeChoices = allChoices;
 
+    // Ash rhyme mode announcement
+    this.voice?.playAshLine('rhyme_prompt');
+
     // Voice: "Which word rhymes with CAT?"
     this.voice?.narrate(`Which word rhymes with ${this.rhymeTarget}?`);
 
@@ -946,6 +962,11 @@ export class PhonicsArenaGame implements GameScreen {
           this.rhymeFlashTimer = 1.0;
 
           tracker.recordAnswer(`rhyme_${this.rhymeFamily}`, 'letter', true);
+
+          // Streak announcements
+          if (tracker.consecutiveCorrect === 3) this.voice?.playAshLine('streak_3');
+          else if (tracker.consecutiveCorrect === 5) this.voice?.playAshLine('streak_5');
+
           this.flameMeter.addCharge(2);
 
           this.audio?.playSynth('correct-chime');
@@ -957,6 +978,9 @@ export class PhonicsArenaGame implements GameScreen {
 
           // Ash celebration
           this.voice?.ashCorrect();
+
+          // Rhyme complete celebration
+          this.voice?.playAshLine('rhyme_complete');
 
           // Voice: "CAT and BAT rhyme! AT! AT!"
           const suffix = this.rhymeFamily.replace('-', '');
@@ -1182,6 +1206,9 @@ export class PhonicsArenaGame implements GameScreen {
 
     this.sightWordChoices = allChoices;
 
+    // Ash sight-word mode announcement
+    this.voice?.playAshLine('sight_word');
+
     // Voice: "Can you find the word THE?"
     this.voice?.narrate(`Can you find the word ${this.sightWordTarget}?`);
 
@@ -1205,6 +1232,11 @@ export class PhonicsArenaGame implements GameScreen {
           this.sightWordFlashTimer = 1.0;
 
           tracker.recordAnswer(`sight_${this.sightWordTarget}`, 'letter', true);
+
+          // Streak announcements
+          if (tracker.consecutiveCorrect === 3) this.voice?.playAshLine('streak_3');
+          else if (tracker.consecutiveCorrect === 5) this.voice?.playAshLine('streak_5');
+
           this.flameMeter.addCharge(2);
 
           this.audio?.playSynth('correct-chime');
@@ -1335,6 +1367,9 @@ export class PhonicsArenaGame implements GameScreen {
     this.phase = 'celebrate';
     this.phaseTimer = 0;
     this.inputLocked = true;
+
+    // Track prompt completion for clip spacing
+    clipManager.onPromptComplete();
 
     this.gameContext.events.emit({ type: 'celebration', intensity: 'normal' });
 

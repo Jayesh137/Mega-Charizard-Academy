@@ -7,9 +7,6 @@ function createSession() {
   let turnOverride = $state<TurnType | null>(null);
   let turnsCompleted = $state(0);
   let currentGame = $state<GameName | null>(null);
-  let roundNumber = $state(0);
-  let promptIndex = $state(0);
-  let missCount = $state(0);
   let activitiesCompleted = $state(0);
   let gemsCollected = $state<string[]>([]);
   let resetExtended = $state(false);
@@ -48,9 +45,6 @@ function createSession() {
     turnOverride = null;
     turnsCompleted = 0;
     currentGame = null;
-    roundNumber = 0;
-    promptIndex = 0;
-    missCount = 0;
     activitiesCompleted = 0;
     gemsCollected = [];
     resetExtended = false;
@@ -94,15 +88,8 @@ function createSession() {
     set currentTurn(v: TurnType) { currentTurn = v; },
     get turnOverride() { return turnOverride; },
     set turnOverride(v: TurnType | null) { turnOverride = v; },
-    get turnsCompleted() { return turnsCompleted; },
     get currentGame() { return currentGame; },
     set currentGame(v: GameName | null) { currentGame = v; },
-    get roundNumber() { return roundNumber; },
-    set roundNumber(v: number) { roundNumber = v; },
-    get promptIndex() { return promptIndex; },
-    set promptIndex(v: number) { promptIndex = v; },
-    get missCount() { return missCount; },
-    set missCount(v: number) { missCount = Math.max(0, v); },
     get activitiesCompleted() { return activitiesCompleted; },
     set activitiesCompleted(v: number) { activitiesCompleted = v; },
     get gemsCollected() { return gemsCollected; },

@@ -173,6 +173,11 @@ export class MemoryMatchGame implements GameScreen {
     this.firstFlipped = null;
     this.secondFlipped = null;
 
+    // Announce whose turn it is
+    const turn = session.currentTurn;
+    if (turn === 'owen') this.voice?.playAshLine('turn_owen');
+    else if (turn === 'kian') this.voice?.playAshLine('turn_kian');
+
     // Play intro voice
     this.voice?.playAshLine('memory_match');
 
@@ -423,6 +428,10 @@ export class MemoryMatchGame implements GameScreen {
       tracker.recordAnswer(this.firstFlipped.content, this.firstFlipped.domain, true);
       session.recordAnswer(true);
       session.recordCorrectConcept(this.firstFlipped.domain, this.firstFlipped.content);
+
+      // Streak announcements
+      if (tracker.consecutiveCorrect === 3) this.voice?.playAshLine('streak_3');
+      else if (tracker.consecutiveCorrect === 5) this.voice?.playAshLine('streak_5');
 
       // Celebration
       this.voice?.playAshLine('memory_found');

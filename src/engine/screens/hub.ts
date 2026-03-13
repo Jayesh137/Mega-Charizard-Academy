@@ -15,7 +15,8 @@ import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../config/constants';
 import { EvolutionManager } from '../systems/evolution-manager';
 import { SessionLimiter } from '../systems/session-limiter';
 import { ClipManager } from '../systems/clip-manager';
-import { pickNextGame } from '../systems/focus-weight';
+import { pickNextGame, resetFocusWeights } from '../systems/focus-weight';
+import { HintLadder } from '../systems/hint-ladder';
 import { drawStar } from '../utils/draw-helpers';
 
 // ---------------------------------------------------------------------------
@@ -326,9 +327,12 @@ export class HubScreen implements GameScreen {
     this.prevKianStars = session.kianStars;
     this.owenStarPulse = 0;
     this.kianStarPulse = 0;
-    // Reset played-games tracking at session start
+    // Reset all session-scoped systems at session start
     if (session.gamesCompleted === 0) {
       this.gamesPlayedThisSession.clear();
+      clipManager.reset();
+      resetFocusWeights();
+      HintLadder.resetAnalytics();
     }
 
     // Cache VoiceSystem — only create once
@@ -347,6 +351,15 @@ export class HubScreen implements GameScreen {
       this.blocked = { reason: check.reason!, waitUntil: check.waitUntil };
       // Emit session-blocked event for overlay
       ctx.events.emit({ type: 'session-blocked', reason: check.reason!, waitUntil: check.waitUntil });
+
+      // Announce limit/cooldown voice lines
+      if (this.voice) {
+        if (check.reason === 'daily-limit') {
+          this.voice.playAshLine('daily_limit');
+        } else if (check.reason === 'cooldown') {
+          this.voice.playAshLine('timeout_start');
+        }
+      }
       return;
     }
 
@@ -406,8 +419,19 @@ export class HubScreen implements GameScreen {
       }
     }
 
+    // Session progress announcements
+    if (this.voice) {
+      if (session.gamesCompleted === 2) {
+        this.voice.playAshLine('halfway');
+      } else if (session.gamesCompleted === 3) {
+        this.voice.playAshLine('almost_done');
+      }
+    }
+
     // Check for finale — all 4 games completed
     if (session.gamesCompleted >= 4) {
+      // Announce session end
+      this.voice?.playAshLine('session_end');
       sessionLimiter.recordSessionEnd();
       this.delay(() => ctx.screenManager.goTo('finale'), 2000);
       return;
@@ -455,6 +479,12 @@ export class HubScreen implements GameScreen {
     // Milestone text timer
     if (this.milestoneTimer > 0) {
       this.milestoneTimer = Math.max(0, this.milestoneTimer - dt);
+    }
+
+    // Check if cooldown has expired (timeout_end)
+    if (this.blocked && this.blocked.reason === 'cooldown' && this.blocked.waitUntil && Date.now() >= this.blocked.waitUntil) {
+      this.blocked = null;
+      this.voice?.playAshLine('timeout_end');
     }
 
     // Ambient flame particles — intensity based on evolution stage

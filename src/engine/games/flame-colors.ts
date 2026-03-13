@@ -325,6 +325,10 @@ export class FlameColorsGame implements GameScreen {
     const turn = session.nextTurn();
     session.currentTurn = turn;
 
+    // Announce whose turn it is
+    if (turn === 'owen') this.voice?.playAshLine('turn_owen');
+    else if (turn === 'kian') this.voice?.playAshLine('turn_kian');
+
     this.phase = 'banner';
     this.phaseTimer = 0;
     this.inputLocked = true;
@@ -1023,6 +1027,9 @@ export class FlameColorsGame implements GameScreen {
     // Initialize hint ladder
     this.hintLadder.startPrompt(this.objectData.color);
 
+    // Ash object mode announcement
+    this.voice?.playAshLine('color_object');
+
     // Voice: "What color is the banana?"
     this.voice?.narrate(`What color is the ${this.objectData.name}?`);
     this.audio?.playSynth('pop');
@@ -1280,6 +1287,9 @@ export class FlameColorsGame implements GameScreen {
     this.phaseTimer = 0;
     this.inputLocked = true;
 
+    // Track prompt completion for clip spacing
+    clipManager.onPromptComplete();
+
     // Celebration event for overlay
     this.gameContext.events.emit({
       type: 'celebration',
@@ -1467,6 +1477,10 @@ export class FlameColorsGame implements GameScreen {
 
     // Consecutive correct tracking (for Kian speed rounds)
     this.consecutiveCorrect++;
+
+    // Streak announcements
+    if (tracker.consecutiveCorrect === 3) this.voice?.playAshLine('streak_3');
+    else if (tracker.consecutiveCorrect === 5) this.voice?.playAshLine('streak_5');
 
     // Audio
     this.audio?.playSynth('correct-chime');

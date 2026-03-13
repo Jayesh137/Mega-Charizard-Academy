@@ -348,6 +348,10 @@ export class EvolutionTowerGame implements GameScreen {
     const turn = session.nextTurn();
     session.currentTurn = turn;
 
+    // Announce whose turn it is
+    if (turn === 'owen') this.voice?.playAshLine('turn_owen');
+    else if (turn === 'kian') this.voice?.playAshLine('turn_kian');
+
     this.phase = 'banner';
     this.phaseTimer = 0;
     this.inputLocked = true;
@@ -437,6 +441,9 @@ export class EvolutionTowerGame implements GameScreen {
     this.phase = 'celebrate';
     this.phaseTimer = 0;
     this.inputLocked = true;
+
+    // Track prompt completion for clip spacing
+    clipManager.onPromptComplete();
 
     this.gameContext.events.emit({ type: 'celebration', intensity: 'normal' });
   }
@@ -564,6 +571,9 @@ export class EvolutionTowerGame implements GameScreen {
   }
 
   private setupPropertiesPrompt(): void {
+    // Ash shape properties mode announcement
+    this.voice?.playAshLine('shape_sides');
+
     // Pick a random property question from the content bank
     const q = shapePropertyQuestions[
       Math.floor(Math.random() * shapePropertyQuestions.length)
@@ -778,6 +788,10 @@ export class EvolutionTowerGame implements GameScreen {
 
     // Consecutive correct tracking
     this.consecutiveCorrect++;
+
+    // Streak announcements
+    if (tracker.consecutiveCorrect === 3) this.voice?.playAshLine('streak_3');
+    else if (tracker.consecutiveCorrect === 5) this.voice?.playAshLine('streak_5');
 
     // Audio
     this.audio?.playSynth('correct-chime');

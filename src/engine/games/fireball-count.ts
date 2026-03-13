@@ -738,6 +738,11 @@ export class FireballCountGame implements GameScreen {
     this.phaseTimer = 0;
     this.bannerAlpha = 0;
 
+    // Announce whose turn it is
+    const turn = session.currentTurn;
+    if (turn === 'owen') this.voice?.playAshLine('turn_owen');
+    else if (turn === 'kian') this.voice?.playAshLine('turn_kian');
+
     // Narration
     this.voice?.narrate('Charge the right number!');
   }
@@ -1116,6 +1121,9 @@ export class FireballCountGame implements GameScreen {
     // Start hint ladder
     this.hints.startPrompt(`tenframe-${this.tenFrameCount}`);
 
+    // Ash ten-frame mode announcement
+    this.voice?.playAshLine('ten_frame');
+
     // Voice: "How many dots?"
     this.audio?.speakFallback('How many dots?');
 
@@ -1160,6 +1168,10 @@ export class FireballCountGame implements GameScreen {
     if (btn.correct) {
       // Record success
       tracker.recordAnswer(`tenframe-${this.tenFrameCount}`, 'number', !this.hintedThisPrompt);
+
+      // Streak announcements
+      if (tracker.consecutiveCorrect === 3) this.voice?.playAshLine('streak_3');
+      else if (tracker.consecutiveCorrect === 5) this.voice?.playAshLine('streak_5');
 
       // Flame meter
       if (this.hintedThisPrompt) {
@@ -1290,12 +1302,19 @@ export class FireballCountGame implements GameScreen {
       // Record success
       tracker.recordAnswer(`doubles-${this.doublesA}`, 'number', !this.hintedThisPrompt);
 
+      // Streak announcements
+      if (tracker.consecutiveCorrect === 3) this.voice?.playAshLine('streak_3');
+      else if (tracker.consecutiveCorrect === 5) this.voice?.playAshLine('streak_5');
+
       // Flame meter charge
       if (this.hintedThisPrompt) {
         this.flameMeter.addCharge(2);
       } else {
         this.flameMeter.addCharge(3);
       }
+
+      // Doubles celebration
+      this.voice?.playAshLine('doubles_celebration');
 
       // Voice: "3 plus 3 is 6!"
       const wordA = NUMBER_WORDS[this.doublesA] || String(this.doublesA);
@@ -1585,6 +1604,10 @@ export class FireballCountGame implements GameScreen {
         : String(this.targetNumber);
       tracker.recordAnswer(concept, 'number', correct);
 
+      // Streak announcements
+      if (tracker.consecutiveCorrect === 3) this.voice?.playAshLine('streak_3');
+      else if (tracker.consecutiveCorrect === 5) this.voice?.playAshLine('streak_5');
+
       // Flame meter charge
       if (this.hints.autoCompleted) {
         this.flameMeter.addCharge(0.5);
@@ -1749,6 +1772,9 @@ export class FireballCountGame implements GameScreen {
   private startCelebrate(): void {
     this.phase = 'celebrate';
     this.phaseTimer = 0;
+
+    // Track prompt completion for clip spacing
+    clipManager.onPromptComplete();
 
     // Ash celebration: "YEAH! That's it!" / "AWESOME!" etc.
     this.voice?.ashCorrect();
@@ -2001,6 +2027,10 @@ export class FireballCountGame implements GameScreen {
       this.bannerName = session.currentTurn === 'kian'
         ? settings.bigTrainerName
         : settings.littleTrainerName;
+
+      // Announce whose turn it is
+      if (session.currentTurn === 'owen') this.voice?.playAshLine('turn_owen');
+      else if (session.currentTurn === 'kian') this.voice?.playAshLine('turn_kian');
 
       this.startEngagePhase();
     }
