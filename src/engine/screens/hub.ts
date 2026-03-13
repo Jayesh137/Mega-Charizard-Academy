@@ -361,24 +361,24 @@ export class HubScreen implements GameScreen {
       session.gamesCompleted++;
 
       // Check for evolution after game completion
-      const evo = evolutionManager.addCharge(0); // meter was already charged during game
-      if (evo) {
-        this.justEvolvedTo = evo;
+      const evoEvent = evolutionManager.addCharge(0); // meter was already charged during game
+      if (evoEvent) {
+        this.justEvolvedTo = evoEvent.stage;
         this.evolveAnimTime = 0;
         this.evolveFlashAlpha = 1;
         this.updateSprite();
 
         // Play evolution clip
-        const clip = clipManager.getEvolutionClip(evo);
+        const clip = clipManager.getEvolutionClip(evoEvent.stage);
         if (clip) {
           ctx.events.emit({ type: 'play-video', src: clip.src });
         }
 
         // Ash evolution line
         if (this.voice) {
-          if (evo === 'charmeleon') this.voice.playAshLine('evolution');
-          else if (evo === 'charizard') this.voice.ash('evo-charizard');
-          else if (evo === 'megax') this.voice.ash('evo-mega');
+          if (evoEvent.stage === 'charmeleon') this.voice.playAshLine('evolution');
+          else if (evoEvent.stage === 'charizard') this.voice.ash('evo-charizard');
+          else if (evoEvent.stage === 'megax') this.voice.ash('evo-mega');
         }
 
         this.audio?.playSynth('cheer');
