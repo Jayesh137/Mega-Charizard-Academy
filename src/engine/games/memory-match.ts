@@ -446,8 +446,8 @@ export class MemoryMatchGame implements GameScreen {
       this.phase = 'celebrate';
       this.phaseTimer = 0;
 
-      // Variable-ratio clip reward
-      if (clipManager.shouldShowCelebrationClip(this.pairsFound)) {
+      // Variable-ratio clip reward (use streak count, not pairs found)
+      if (clipManager.shouldShowCelebrationClip(tracker.consecutiveCorrect)) {
         const clip = clipManager.getCelebrationClip();
         if (clip) {
           this.gameContext.events.emit({ type: 'play-video', src: clip.src });
