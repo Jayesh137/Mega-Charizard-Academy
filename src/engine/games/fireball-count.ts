@@ -187,6 +187,9 @@ export class FireballCountGame implements GameScreen {
   private flameMeter = new FlameMeter();
   private gameContext!: GameContext;
 
+  // Timeout tracking (cleaned up on exit)
+  private timeouts: number[] = [];
+
   // Game state
   private phase: GamePhase = 'banner';
   private phaseTimer = 0;
@@ -265,6 +268,11 @@ export class FireballCountGame implements GameScreen {
   // Audio helper
   private get audio(): any {
     return this.gameContext.audio;
+  }
+
+  /** Schedule a callback and track it for cleanup on exit */
+  private delay(fn: () => void, ms: number): void {
+    this.timeouts.push(window.setTimeout(fn, ms) as unknown as number);
   }
 
   // ---------------------------------------------------------------------------
@@ -457,6 +465,8 @@ export class FireballCountGame implements GameScreen {
   }
 
   exit(): void {
+    for (const t of this.timeouts) clearTimeout(t);
+    this.timeouts = [];
     this.particles.clear();
   }
 
@@ -1036,6 +1046,7 @@ export class FireballCountGame implements GameScreen {
       this.audio?.speakFallback(`${word}! Yes!`);
       this.audio?.playSynth('correct-chime');
       this.gameContext?.audio?.playSynth('star-collect');
+      session.awardStar(1);
 
       // Particle burst on each dot position
       for (const dot of this.subitizeDots) {
@@ -1043,7 +1054,7 @@ export class FireballCountGame implements GameScreen {
       }
 
       // Celebrate after short pause
-      setTimeout(() => {
+      this.delay(() => {
         this.startCelebrate();
       }, 400);
     } else {
@@ -1067,7 +1078,7 @@ export class FireballCountGame implements GameScreen {
           this.gameContext.events.emit({ type: 'play-video', src: encClip.src });
         }
 
-        setTimeout(() => {
+        this.delay(() => {
           this.startCelebrate();
         }, 600);
       } else {
@@ -1189,6 +1200,7 @@ export class FireballCountGame implements GameScreen {
 
       // Star collect SFX on correct answer
       this.gameContext?.audio?.playSynth('star-collect');
+      session.awardStar(1);
 
       // Update equation for addition mode
       if (this.mode === 'addition') {
@@ -1200,7 +1212,7 @@ export class FireballCountGame implements GameScreen {
       }
 
       // Short pause then celebrate
-      setTimeout(() => {
+      this.delay(() => {
         this.startCelebrate();
       }, 300);
     }
@@ -1311,7 +1323,7 @@ export class FireballCountGame implements GameScreen {
     }
 
     // Celebrate with reduced fanfare
-    setTimeout(() => {
+    this.delay(() => {
       this.startCelebrate();
     }, 300);
   }
@@ -1512,7 +1524,6 @@ export class FireballCountGame implements GameScreen {
       this.bannerName = session.currentTurn === 'kian'
         ? settings.bigTrainerName
         : settings.littleTrainerName;
-      this.totalPrompts = session.currentTurn === 'kian' ? KIAN_PROMPTS : OWEN_PROMPTS;
 
       this.startEngagePhase();
     }
@@ -1525,7 +1536,7 @@ export class FireballCountGame implements GameScreen {
     session.activitiesCompleted++;
     session.currentScreen = 'calm-reset';
 
-    setTimeout(() => {
+    this.delay(() => {
       this.gameContext.screenManager.goTo('calm-reset');
     }, 500);
   }
@@ -2190,6 +2201,7 @@ export class FireballCountGame implements GameScreen {
       this.audio?.speakFallback(`${shownWord} and ${answerWord} make ${wholeWord}!`);
       this.audio?.playSynth('correct-chime');
       this.gameContext?.audio?.playSynth('star-collect');
+      session.awardStar(1);
 
       // Ash: bonds complete voice line
       this.voice?.playAshLine('bonds_complete');
@@ -2199,7 +2211,7 @@ export class FireballCountGame implements GameScreen {
       this.particles.burst(BONDS_RIGHT_X, BONDS_BOTTOM_Y, 8, '#FFD700', 80, 0.5);
       this.particles.burst(DESIGN_WIDTH / 2, BONDS_TOP_Y, 12, '#37B1E2', 100, 0.6);
 
-      setTimeout(() => {
+      this.delay(() => {
         this.startCelebrate();
       }, 500);
     } else {
@@ -2224,7 +2236,7 @@ export class FireballCountGame implements GameScreen {
           this.gameContext.events.emit({ type: 'play-video', src: encClip.src });
         }
 
-        setTimeout(() => {
+        this.delay(() => {
           this.startCelebrate();
         }, 600);
       } else {
@@ -2607,6 +2619,7 @@ export class FireballCountGame implements GameScreen {
       this.audio?.speakFallback(spokenText);
       this.audio?.playSynth('correct-chime');
       this.gameContext?.audio?.playSynth('star-collect');
+      session.awardStar(1);
 
       // Particle burst on winning group
       const winPositions = comp.answer === 'more' || comp.answer === 'same'
@@ -2616,7 +2629,7 @@ export class FireballCountGame implements GameScreen {
         this.particles.burst(pos.x, pos.y, 8, '#FFD700', 100, 0.6);
       }
 
-      setTimeout(() => {
+      this.delay(() => {
         this.startCelebrate();
       }, 500);
     } else {
@@ -2650,7 +2663,7 @@ export class FireballCountGame implements GameScreen {
           this.gameContext.events.emit({ type: 'play-video', src: encClip.src });
         }
 
-        setTimeout(() => {
+        this.delay(() => {
           this.startCelebrate();
         }, 600);
       } else {

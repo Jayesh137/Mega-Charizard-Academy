@@ -155,6 +155,7 @@ export class FlameColorsGame implements GameScreen {
   private flameMeter = new FlameMeter();
   private voice!: VoiceSystem;
   private gameContext!: GameContext;
+  private timeouts: number[] = [];
 
   // Game state
   private phase: GamePhase = 'banner';
@@ -269,8 +270,14 @@ export class FlameColorsGame implements GameScreen {
   }
 
   exit(): void {
+    for (const t of this.timeouts) clearTimeout(t);
+    this.timeouts = [];
     this.particles.clear();
     this.gameContext.events.emit({ type: 'hide-banner' });
+  }
+
+  private delay(fn: () => void, ms: number): void {
+    this.timeouts.push(window.setTimeout(fn, ms) as unknown as number);
   }
 
   // -----------------------------------------------------------------------
@@ -372,7 +379,7 @@ export class FlameColorsGame implements GameScreen {
     this.audio?.playSynth('pop');
 
     // Transition to play phase after voice finishes (~0.8s)
-    setTimeout(() => {
+    this.delay(() => {
       if (this.phase === 'prompt') {
         this.startPlay();
       }
@@ -567,7 +574,7 @@ export class FlameColorsGame implements GameScreen {
     this.audio?.playSynth('pop');
 
     // Transition to play
-    setTimeout(() => {
+    this.delay(() => {
       if (this.phase === 'prompt') {
         this.startPlay();
       }
@@ -641,7 +648,7 @@ export class FlameColorsGame implements GameScreen {
     this.audio?.playSynth('pop');
 
     // Transition to play
-    setTimeout(() => {
+    this.delay(() => {
       if (this.phase === 'prompt') {
         this.startPlay();
       }
@@ -668,6 +675,7 @@ export class FlameColorsGame implements GameScreen {
         this.audio?.playSynth('correct-chime');
         this.audio?.playSynth('pattern-match');
         this.audio?.playSynth('star-collect');
+        session.awardStar(1);
         this.voice?.ashCorrect();
         this.voice?.crossReinforcColor(answerName);
 
@@ -709,7 +717,7 @@ export class FlameColorsGame implements GameScreen {
     this.inputLocked = true;
 
     const answerName = this.patternData?.answer ?? '';
-    tracker.recordAnswer(answerName, 'color', true);
+    tracker.recordAnswer(answerName, 'color', false);
     this.flameMeter.addCharge(0.5);
     this.audio?.playSynth('pop');
 
@@ -766,7 +774,7 @@ export class FlameColorsGame implements GameScreen {
     this.audio?.playSynth('pop');
 
     // Transition to play
-    setTimeout(() => {
+    this.delay(() => {
       if (this.phase === 'prompt') {
         this.startPlay();
       }
@@ -838,6 +846,7 @@ export class FlameColorsGame implements GameScreen {
         this.audio?.playSynth('correct-chime');
         this.audio?.playSynth('whoosh-up');
         this.audio?.playSynth('star-collect');
+        session.awardStar(1);
         this.particles.burst(gem.x, gem.y, 25, gem.color, 150, 0.8);
         this.particles.burst(gem.x, gem.y, 10, '#ffffff', 80, 0.4);
 
@@ -857,7 +866,7 @@ export class FlameColorsGame implements GameScreen {
           this.voice?.playAshLine('color_sort_complete');
 
           this.voice?.ashCorrect();
-          setTimeout(() => {
+          this.delay(() => {
             this.voice?.narrate(
               `You found all the ${this.sortingTargetColor} ones! Amazing!`,
             );
@@ -865,7 +874,7 @@ export class FlameColorsGame implements GameScreen {
           this.voice?.crossReinforcColor(this.sortingTargetColor);
 
           // Delay celebrate to let slide animation finish
-          setTimeout(() => {
+          this.delay(() => {
             this.startCelebrate();
           }, SORT_SLIDE_DURATION * 1000 + 200);
         }
@@ -906,7 +915,7 @@ export class FlameColorsGame implements GameScreen {
       }
     }
 
-    tracker.recordAnswer(this.sortingTargetColor, 'color', true);
+    tracker.recordAnswer(this.sortingTargetColor, 'color', false);
     this.flameMeter.addCharge(0.5);
     this.audio?.playSynth('pop');
 
@@ -915,7 +924,7 @@ export class FlameColorsGame implements GameScreen {
       this.gameContext.events.emit({ type: 'play-video', src: encClip.src });
     }
 
-    setTimeout(() => {
+    this.delay(() => {
       this.startCelebrate();
     }, SORT_SLIDE_DURATION * 1000 + 200);
   }
@@ -951,7 +960,7 @@ export class FlameColorsGame implements GameScreen {
   private endRound(): void {
     session.activitiesCompleted++;
     session.currentScreen = 'calm-reset';
-    setTimeout(() => {
+    this.delay(() => {
       this.gameContext.screenManager.goTo('calm-reset');
     }, 500);
   }
@@ -1120,6 +1129,7 @@ export class FlameColorsGame implements GameScreen {
     // Audio
     this.audio?.playSynth('correct-chime');
     this.audio?.playSynth('star-collect');
+    session.awardStar(1);
 
     // Ash celebration: "YEAH! That's it!" / "AWESOME!" etc.
     this.voice?.ashCorrect();
@@ -1182,8 +1192,8 @@ export class FlameColorsGame implements GameScreen {
 
     if (!correctGem) return;
 
-    // Record as auto-complete
-    tracker.recordAnswer(this.currentColor!.name, 'color', true);
+    // Record as auto-complete (child did not answer correctly)
+    tracker.recordAnswer(this.currentColor!.name, 'color', false);
     this.flameMeter.addCharge(0.5);
 
     correctGem.alive = false;
@@ -1224,10 +1234,11 @@ export class FlameColorsGame implements GameScreen {
 
         this.audio?.playSynth('correct-chime');
         this.audio?.playSynth('star-collect');
+        session.awardStar(1);
         this.voice?.ashCorrect();
 
         // Celebratory voice: "GREEN! We made green!"
-        setTimeout(() => {
+        this.delay(() => {
           this.voice?.narrate(`${resultName.toUpperCase()}! We made ${resultName}!`);
         }, 600);
 
@@ -1268,7 +1279,7 @@ export class FlameColorsGame implements GameScreen {
     this.inputLocked = true;
 
     const resultName = this.mixPair?.result ?? '';
-    tracker.recordAnswer(resultName, 'color', true);
+    tracker.recordAnswer(resultName, 'color', false);
     this.flameMeter.addCharge(0.5);
     this.audio?.playSynth('pop');
 
@@ -1548,7 +1559,7 @@ export class FlameColorsGame implements GameScreen {
         this.particles.burst(answerX, answerY, 15, '#ffffff', 100, 0.5);
 
         // Transition to celebrate
-        setTimeout(() => {
+        this.delay(() => {
           this.startCelebrate();
         }, 400);
       }

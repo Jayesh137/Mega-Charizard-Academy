@@ -25,6 +25,7 @@ export class OpeningScreen implements GameScreen {
   private phaseTime = 0;
   private totalElapsed = 0;
   private flashAlpha = 0;
+  private timeouts: number[] = [];
 
   // Screen shake
   private shakeOffsetX = 0;
@@ -92,7 +93,7 @@ export class OpeningScreen implements GameScreen {
     }
 
     // If video doesn't play (file missing), start sprite fallback after 500ms
-    setTimeout(() => {
+    this.delay(() => {
       if (this.phase === 'video') {
         this.phase = 'charmander';
         this.phaseTime = 0;
@@ -554,7 +555,13 @@ export class OpeningScreen implements GameScreen {
   }
 
   exit(): void {
+    for (const t of this.timeouts) clearTimeout(t);
+    this.timeouts = [];
     this.particles.clear();
+  }
+
+  private delay(fn: () => void, ms: number): void {
+    this.timeouts.push(window.setTimeout(fn, ms) as unknown as number);
   }
 
   handleClick(_x: number, _y: number): void {

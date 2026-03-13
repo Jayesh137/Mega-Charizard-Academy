@@ -321,6 +321,7 @@ export class HubScreen implements GameScreen {
   private wingFlutterTimer = 0;
   private blocked: { reason: string; waitUntil?: number } | null = null;
   private voice: VoiceSystem | null = null;
+  private timeouts: number[] = [];
 
   // Star display state
   private prevOwenStars = 0;
@@ -431,7 +432,7 @@ export class HubScreen implements GameScreen {
     // Check for finale — all 4 games completed
     if (session.gamesCompleted >= 4) {
       sessionLimiter.recordSessionEnd();
-      setTimeout(() => ctx.screenManager.goTo('finale'), 2000);
+      this.delay(() => ctx.screenManager.goTo('finale'), 2000);
       return;
     }
   }
@@ -593,8 +594,14 @@ export class HubScreen implements GameScreen {
   }
 
   exit(): void {
+    for (const t of this.timeouts) clearTimeout(t);
+    this.timeouts = [];
     this.particles.clear();
     this.voice = null;
+  }
+
+  private delay(fn: () => void, ms: number): void {
+    this.timeouts.push(window.setTimeout(fn, ms) as unknown as number);
   }
 
   handleClick(x: number, y: number): void {
@@ -630,7 +637,7 @@ export class HubScreen implements GameScreen {
     session.currentGame = game;
 
     // Transition after delay
-    setTimeout(() => {
+    this.delay(() => {
       session.currentScreen = game;
       this.gameContext.screenManager.goTo(game);
     }, 800);

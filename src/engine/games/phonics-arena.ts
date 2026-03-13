@@ -153,6 +153,7 @@ export class PhonicsArenaGame implements GameScreen {
   private flameMeter = new FlameMeter();
   private voice!: VoiceSystem;
   private gameContext!: GameContext;
+  private timeouts: number[] = [];
 
   // Game state
   private phase: GamePhase = 'banner';
@@ -244,8 +245,14 @@ export class PhonicsArenaGame implements GameScreen {
   }
 
   exit(): void {
+    for (const t of this.timeouts) clearTimeout(t);
+    this.timeouts = [];
     this.particles.clear();
     this.gameContext.events.emit({ type: 'hide-banner' });
+  }
+
+  private delay(fn: () => void, ms: number): void {
+    this.timeouts.push(window.setTimeout(fn, ms) as unknown as number);
   }
 
   // -----------------------------------------------------------------------
@@ -488,6 +495,7 @@ export class PhonicsArenaGame implements GameScreen {
 
           this.audio?.playSynth('correct-chime');
           this.audio?.playSynth('star-collect');
+          session.awardStar(1);
 
           // Ash celebration: "YEAH! That's it!" / "AWESOME!" etc.
           this.voice?.ashCorrect();
@@ -708,6 +716,7 @@ export class PhonicsArenaGame implements GameScreen {
     this.audio?.playSynth('whoosh-up');
     this.audio?.playSynth('pattern-match');
     this.audio?.playSynth('star-collect');
+    session.awardStar(1);
 
     // Particle burst at tile
     this.particles.burst(
@@ -730,7 +739,7 @@ export class PhonicsArenaGame implements GameScreen {
     // Place remaining letters one at a time with staggered delays
     const remaining = this.currentWord.letters.length - this.nextLetterIndex;
     for (let i = 0; i < remaining; i++) {
-      setTimeout(() => {
+      this.delay(() => {
         if (!this.currentWord) return;
         const letter = this.currentWord.letters[this.nextLetterIndex];
         const tile = this.wordTiles.find(t => !t.placed && t.letter === letter);
@@ -883,6 +892,7 @@ export class PhonicsArenaGame implements GameScreen {
 
           this.audio?.playSynth('correct-chime');
           this.audio?.playSynth('star-collect');
+          session.awardStar(1);
 
           // Ash celebration
           this.voice?.ashCorrect();
@@ -989,7 +999,7 @@ export class PhonicsArenaGame implements GameScreen {
         this.flameMeter.addCharge(0.5);
         this.audio?.playSynth('pop');
 
-        tracker.recordAnswer(`rhyme_${this.rhymeFamily}`, 'letter', true);
+        tracker.recordAnswer(`rhyme_${this.rhymeFamily}`, 'letter', false);
 
         const suffix = this.rhymeFamily.replace('-', '');
         this.voice?.narrate(
@@ -1090,7 +1100,7 @@ export class PhonicsArenaGame implements GameScreen {
   private endRound(): void {
     session.activitiesCompleted++;
     session.currentScreen = 'calm-reset';
-    setTimeout(() => {
+    this.delay(() => {
       this.gameContext.screenManager.goTo('calm-reset');
     }, 500);
   }
@@ -1273,11 +1283,11 @@ export class PhonicsArenaGame implements GameScreen {
         this.choiceFlashTimer = 1.0;
         this.flameMeter.addCharge(0.5);
         this.audio?.playSynth('pop');
-        // Track auto-complete as correct (spaced repetition still re-surfaces)
+        // Track auto-complete as incorrect (child did not answer; spaced repetition will re-surface)
         const concept = this.isPhonicsRound
           ? PHONICS[this.currentLetter!.letter]?.sound ?? this.currentLetter!.letter
           : this.currentLetter!.letter;
-        tracker.recordAnswer(concept, 'letter', true);
+        tracker.recordAnswer(concept, 'letter', false);
 
         // Play encouragement video clip
         const encClip = clipManager.pick('encouragement');

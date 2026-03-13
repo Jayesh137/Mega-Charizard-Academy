@@ -108,7 +108,7 @@ export class FeedbackSystem {
     ctx.globalAlpha = this.feedbackAlpha;
 
     const fontSize = Math.round(72 * this.feedbackScale);
-    ctx.font = `bold ${fontSize}px Fredoka, Fredoka, Nunito, sans-serif, sans-serif`;
+    ctx.font = `bold ${fontSize}px Fredoka, Nunito, sans-serif`;
     ctx.fillStyle = this.feedbackColor;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';

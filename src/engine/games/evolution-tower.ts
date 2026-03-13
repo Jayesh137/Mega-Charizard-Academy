@@ -254,6 +254,7 @@ export class EvolutionTowerGame implements GameScreen {
   private flameMeter = new FlameMeter();
   private voice!: VoiceSystem;
   private gameContext!: GameContext;
+  private timeouts: number[] = [];
 
   // Game state
   private phase: GamePhase = 'banner';
@@ -317,8 +318,14 @@ export class EvolutionTowerGame implements GameScreen {
   }
 
   exit(): void {
+    for (const t of this.timeouts) clearTimeout(t);
+    this.timeouts = [];
     this.particles.clear();
     this.gameContext.events.emit({ type: 'hide-banner' });
+  }
+
+  private delay(fn: () => void, ms: number): void {
+    this.timeouts.push(window.setTimeout(fn, ms) as unknown as number);
   }
 
   // -----------------------------------------------------------------------
@@ -401,7 +408,7 @@ export class EvolutionTowerGame implements GameScreen {
     this.audio?.playSynth('pop');
 
     // Transition to play phase after preview period
-    setTimeout(() => {
+    this.delay(() => {
       if (this.phase === 'prompt') {
         this.startPlay();
       }
@@ -436,7 +443,7 @@ export class EvolutionTowerGame implements GameScreen {
   private endRound(): void {
     session.activitiesCompleted++;
     session.currentScreen = 'calm-reset';
-    setTimeout(() => {
+    this.delay(() => {
       this.gameContext.screenManager.goTo('calm-reset');
     }, 500);
   }
@@ -715,6 +722,7 @@ export class EvolutionTowerGame implements GameScreen {
     // Audio
     this.audio?.playSynth('correct-chime');
     this.audio?.playSynth('star-collect');
+    session.awardStar(1);
 
     // Pattern mode: satisfying click for matching the pattern
     if (this.promptMode === 'pattern') {
@@ -778,7 +786,7 @@ export class EvolutionTowerGame implements GameScreen {
     const correct = this.choices.find(c => c.isCorrect && c.alive);
     if (!correct) return;
 
-    tracker.recordAnswer(this.targetLabel, 'shape', true);
+    tracker.recordAnswer(this.targetLabel, 'shape', false);
     this.flameMeter.addCharge(0.5);
 
     correct.alive = false;

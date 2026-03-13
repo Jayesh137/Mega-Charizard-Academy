@@ -187,6 +187,7 @@ export class EvolutionChallengeGame implements GameScreen {
   private flameMeter = new FlameMeter();
   private voice!: VoiceSystem;
   private gameContext!: GameContext;
+  private timeouts: number[] = [];
 
   // Game state
   private phase: GamePhase = 'banner';
@@ -244,8 +245,14 @@ export class EvolutionChallengeGame implements GameScreen {
   }
 
   exit(): void {
+    for (const t of this.timeouts) clearTimeout(t);
+    this.timeouts = [];
     this.particles.clear();
     this.gameContext.events.emit({ type: 'hide-banner' });
+  }
+
+  private delay(fn: () => void, ms: number): void {
+    this.timeouts.push(window.setTimeout(fn, ms) as unknown as number);
   }
 
   // -----------------------------------------------------------------------
@@ -376,7 +383,7 @@ export class EvolutionChallengeGame implements GameScreen {
   private endRound(): void {
     session.activitiesCompleted++;
     session.currentScreen = 'calm-reset';
-    setTimeout(() => {
+    this.delay(() => {
       this.gameContext.screenManager.goTo('calm-reset');
     }, 500);
   }
@@ -636,6 +643,7 @@ export class EvolutionChallengeGame implements GameScreen {
     this.flameMeter.addCharge(hinted ? 1 : 2);
 
     this.audio?.playSynth('correct-chime');
+    session.awardStar(1);
 
     // Ash celebration: "YEAH! That's it!" / "AWESOME!" etc.
     this.voice?.ashCorrect();
@@ -648,7 +656,7 @@ export class EvolutionChallengeGame implements GameScreen {
     // Voice the evolution relationship
     if (this.promptMode === 'recognition' && this.centerEntry) {
       // "Charmander evolves into Charmeleon!"
-      setTimeout(() => {
+      this.delay(() => {
         this.voice?.successEcho(
           `${this.centerEntry!.name} evolves into ${card.entry.name}`,
           'evolution!',
@@ -656,7 +664,7 @@ export class EvolutionChallengeGame implements GameScreen {
       }, 800);
     } else if (this.promptMode === 'reverse' && this.centerEntry) {
       // "Charmander evolves into Charmeleon!"
-      setTimeout(() => {
+      this.delay(() => {
         this.voice?.successEcho(
           `${card.entry.name} evolves into ${this.centerEntry!.name}`,
           'evolution!',
@@ -691,7 +699,7 @@ export class EvolutionChallengeGame implements GameScreen {
     const correctCard = this.cards.find(c => c.isCorrect && c.alive);
     if (!correctCard) return;
 
-    tracker.recordAnswer(this.correctEntry?.name ?? '', 'evolution', true);
+    tracker.recordAnswer(this.correctEntry?.name ?? '', 'evolution', false);
     this.flameMeter.addCharge(0.5);
 
     correctCard.alive = false;
@@ -723,6 +731,7 @@ export class EvolutionChallengeGame implements GameScreen {
       this.orderTapIndex++;
 
       this.audio?.playSynth('correct-chime');
+      session.awardStar(1);
       tracker.recordAnswer(card.entry.name, 'evolution', true);
       this.flameMeter.addCharge(1);
 
@@ -768,7 +777,7 @@ export class EvolutionChallengeGame implements GameScreen {
       if (card) {
         card.locked = true;
         card.lockBadge = i + 1;
-        tracker.recordAnswer(card.entry.name, 'evolution', true);
+        tracker.recordAnswer(card.entry.name, 'evolution', false);
       }
     }
 
