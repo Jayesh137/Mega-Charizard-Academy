@@ -5,8 +5,10 @@
   let visible = $state(false);
   let countdown = $state('3:00');
   let wakeUp = $state(false);
+  let pendingTimer: number | null = null;
 
   export function show(): void {
+    if (pendingTimer !== null) { clearTimeout(pendingTimer); pendingTimer = null; }
     visible = true;
     wakeUp = false;
     countdown = '3:00';
@@ -15,9 +17,11 @@
   export function hide(): void {
     // Trigger wake-up animation before hiding
     wakeUp = true;
-    setTimeout(() => {
+    if (pendingTimer !== null) clearTimeout(pendingTimer);
+    pendingTimer = window.setTimeout(() => {
       visible = false;
       wakeUp = false;
+      pendingTimer = null;
     }, 1200);
   }
 

@@ -4,13 +4,15 @@
 
   let active = $state(false);
   let intensity = $state<Intensity>('normal');
+  let pendingTimer: number | null = null;
 
   export function trigger(level: Intensity) {
     intensity = level;
     active = true;
 
+    if (pendingTimer !== null) clearTimeout(pendingTimer);
     const duration = level === 'hype' ? 800 : level === 'normal' ? 500 : 300;
-    setTimeout(() => { active = false; }, duration);
+    pendingTimer = window.setTimeout(() => { active = false; pendingTimer = null; }, duration);
   }
 </script>
 

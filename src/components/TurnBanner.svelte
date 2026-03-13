@@ -5,6 +5,7 @@
   let visible = $state(false);
   let currentTurn = $state<TurnType>('owen');
   let animating = $state(false);
+  let pendingTimer: number | null = null;
 
   const turnConfig: Record<TurnType, { name: string; color: string; bgColor: string; icon: string; role: string }> = {
     owen: { name: 'Owen', color: '#F08030', bgColor: 'rgba(240, 128, 48, 0.95)', icon: '\u{1F525}', role: "Owen's Turn!" },
@@ -13,6 +14,7 @@
   };
 
   export function show(turn: TurnType) {
+    if (pendingTimer !== null) { clearTimeout(pendingTimer); pendingTimer = null; }
     currentTurn = turn;
     visible = true;
     animating = true;
@@ -20,7 +22,8 @@
 
   export function hide() {
     animating = false;
-    setTimeout(() => { visible = false; }, 300);
+    if (pendingTimer !== null) clearTimeout(pendingTimer);
+    pendingTimer = window.setTimeout(() => { visible = false; pendingTimer = null; }, 300);
   }
 </script>
 
