@@ -6,7 +6,8 @@
   import { ScreenManager } from '../engine/screen-manager';
   import { EventEmitter } from '../engine/events';
   import { TweenManager } from '../engine/utils/tween';
-  import { handleHotkey, onKeyDown, onKeyUp, registerTimeoutToggle, registerOverride } from '../engine/input';
+  import { handleHotkey, onKeyDown, onKeyUp, registerTimeoutToggle, registerOverride, registerParentDashboard } from '../engine/input';
+  import { session } from '../state/session.svelte';
   import { LoadingCanvasScreen } from '../engine/screens/loading';
   import { OpeningScreen } from '../engine/screens/opening';
   import { HubScreen, sessionLimiter } from '../engine/screens/hub';
@@ -17,6 +18,7 @@
   import { PhonicsArenaGame } from '../engine/games/phonics-arena';
   import { EvolutionTowerGame } from '../engine/games/evolution-tower';
   import { EvolutionChallengeGame } from '../engine/games/evolution-challenge';
+  import { ParentDashboardScreen } from '../engine/screens/parent-dashboard';
 
   let canvasEl: HTMLCanvasElement;
   let gameLoop: GameLoop | null = null;
@@ -69,6 +71,8 @@
     screenManager.register('phonics-arena', new PhonicsArenaGame());
     screenManager.register('evolution-tower', new EvolutionTowerGame());
     screenManager.register('evolution-challenge', new EvolutionChallengeGame());
+    const parentDashboard = new ParentDashboardScreen();
+    screenManager.register('parent-dashboard', parentDashboard);
     screenManager.goTo('loading');
     screenManagerRef = screenManager;
 
@@ -85,6 +89,16 @@
     registerOverride(() => {
       sessionLimiter.override();
       events!.emit({ type: 'timeout-end' });
+    });
+
+    registerParentDashboard(() => {
+      if (session.currentScreen === 'parent-dashboard') {
+        // Already on dashboard — go back
+        screenManager.goTo('hub');
+      } else {
+        parentDashboard.setPreviousScreen(session.currentScreen);
+        screenManager.goTo('parent-dashboard');
+      }
     });
 
     gameLoop.start();

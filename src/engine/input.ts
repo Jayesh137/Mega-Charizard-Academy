@@ -7,6 +7,7 @@ export type HotkeyAction = () => void;
 let settingsToggleCallback: (() => void) | null = null;
 let timeoutToggleCb: (() => void) | null = null;
 let overrideCb: (() => void) | null = null;
+let parentDashboardCb: (() => void) | null = null;
 
 export function registerSettingsToggle(cb: () => void): void {
   settingsToggleCallback = cb;
@@ -18,6 +19,10 @@ export function registerTimeoutToggle(cb: () => void): void {
 
 export function registerOverride(cb: () => void): void {
   overrideCb = cb;
+}
+
+export function registerParentDashboard(cb: () => void): void {
+  parentDashboardCb = cb;
 }
 
 const hotkeys: Record<string, HotkeyAction> = {
@@ -32,6 +37,7 @@ const hotkeys: Record<string, HotkeyAction> = {
   'd': () => { session.showDebug = !session.showDebug; },
   'f': () => toggleFullscreen(),
   'g': () => { settingsToggleCallback?.(); },
+  'p': () => { parentDashboardCb?.(); },
 };
 
 function toggleFullscreen(): void {

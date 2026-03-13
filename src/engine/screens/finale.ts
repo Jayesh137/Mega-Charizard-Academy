@@ -14,6 +14,7 @@ import { VoiceSystem } from '../voice';
 import { randomRange } from '../utils/math';
 import { settings } from '../../state/settings.svelte';
 import { session } from '../../state/session.svelte';
+import { tracker, type DomainSummary } from '../../state/tracker.svelte';
 import { clipManager, evolutionManager } from './hub';
 import { drawStar } from '../utils/draw-helpers';
 
@@ -100,6 +101,9 @@ export class FinaleScreen implements GameScreen {
   private skillsList: string[] = [];
   private conceptsMastered: string[] = [];
   private conceptsToReview: string[] = [];
+  private owenDomains: DomainSummary[] = [];
+  private kianDomains: DomainSummary[] = [];
+  private homeSuggestions: string[] = [];
 
   // Star pop-in animation tracking
   private starPopTimers: { owen: number; kian: number } = { owen: 0, kian: 0 };
@@ -150,6 +154,26 @@ export class FinaleScreen implements GameScreen {
     }
     this.conceptsMastered = [...new Set(mastered)].slice(0, 6);
     this.conceptsToReview = [...new Set(struggled)].slice(0, 4);
+
+    // Capture domain-level summaries from enhanced tracker
+    this.owenDomains = tracker.getDomainSummaries('owen');
+    this.kianDomains = tracker.getDomainSummaries('kian');
+
+    // Generate home practice suggestions based on ZPD
+    this.homeSuggestions = this.generateHomeSuggestions();
+
+    // Persist session data to settings for longitudinal tracking
+    tracker.persistToSettings();
+    settings.addSessionHistory({
+      date: new Date().toISOString(),
+      durationMinutes: this.sessionMinutes,
+      owenAccuracy: this.owenAccuracy,
+      kianAccuracy: this.kianAccuracy,
+      gamesPlayed: this.skillsList,
+      owenStars: this.owenStars,
+      kianStars: this.kianStars,
+      skillsPracticed: this.skillsList,
+    });
 
     // Reset star pop timers
     this.starPopTimers = { owen: 0, kian: 0 };
@@ -463,69 +487,51 @@ export class FinaleScreen implements GameScreen {
     const durationText = this.sessionMinutes > 0 ? ` (${this.sessionMinutes} min)` : '';
     ctx.fillText(`Games Played: ${this.gamesPlayed}${durationText}`, DESIGN_WIDTH / 2, PANEL_Y + 230);
 
-    // --- Accuracy bars ---
-    const barY = PANEL_Y + 258;
-    const barW = 120;
-    const barH = 14;
+    // --- Domain accuracy bars (Owen) ---
+    let barY = PANEL_Y + 248;
+    this.drawDomainBars(ctx, this.owenDomains, this.owenAccuracy, littleName, leftCenterX, barY);
 
-    // Owen accuracy
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-    ctx.font = '20px Fredoka, Nunito, sans-serif';
-    ctx.fillText(`${littleName}: ${this.owenAccuracy}%`, leftCenterX, barY - 10);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
-    fillRoundedRect(ctx, leftCenterX - barW / 2, barY, barW, barH, 7);
-    ctx.fillStyle = this.owenAccuracy >= 70 ? '#33CC33' : '#FFD700';
-    fillRoundedRect(ctx, leftCenterX - barW / 2, barY, barW * (this.owenAccuracy / 100), barH, 7);
-
-    // Kian accuracy
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-    ctx.font = '20px Fredoka, Nunito, sans-serif';
-    ctx.fillText(`${bigName}: ${this.kianAccuracy}%`, rightCenterX, barY - 10);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
-    fillRoundedRect(ctx, rightCenterX - barW / 2, barY, barW, barH, 7);
-    ctx.fillStyle = this.kianAccuracy >= 70 ? '#33CC33' : '#FFD700';
-    fillRoundedRect(ctx, rightCenterX - barW / 2, barY, barW * (this.kianAccuracy / 100), barH, 7);
+    // --- Domain accuracy bars (Kian) ---
+    this.drawDomainBars(ctx, this.kianDomains, this.kianAccuracy, bigName, rightCenterX, barY);
 
     // --- Evolution stage row ---
     ctx.fillStyle = '#91CCEC';
-    ctx.font = 'bold 24px Fredoka, Nunito, sans-serif';
-    ctx.fillText(`Evolution: ${this.evolutionStageName}!`, DESIGN_WIDTH / 2, PANEL_Y + 300);
+    ctx.font = 'bold 22px Fredoka, Nunito, sans-serif';
+    ctx.fillText(`Evolution: ${this.evolutionStageName}!`, DESIGN_WIDTH / 2, PANEL_Y + 340);
 
-    // --- Skills practiced ---
-    if (this.skillsList.length > 0) {
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
-      ctx.font = '20px Fredoka, Nunito, sans-serif';
-      ctx.fillText(`Skills: ${this.skillsList.join(', ')}`, DESIGN_WIDTH / 2, PANEL_Y + 330);
-    }
-
-    // --- Concepts mastered ---
-    if (this.conceptsMastered.length > 0) {
-      ctx.fillStyle = '#33CC33';
-      ctx.font = '18px Fredoka, Nunito, sans-serif';
-      ctx.fillText(`Mastered: ${this.conceptsMastered.join(', ')}`, DESIGN_WIDTH / 2, PANEL_Y + 358);
-    }
-
-    // --- Concepts to review ---
-    if (this.conceptsToReview.length > 0) {
+    // --- Home suggestions ---
+    if (this.homeSuggestions.length > 0) {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+      ctx.font = '16px Fredoka, Nunito, sans-serif';
+      ctx.fillText('Practice at Home:', DESIGN_WIDTH / 2, PANEL_Y + 368);
       ctx.fillStyle = '#FFB347';
-      ctx.font = '18px Fredoka, Nunito, sans-serif';
-      ctx.fillText(`Keep Practicing: ${this.conceptsToReview.join(', ')}`, DESIGN_WIDTH / 2, PANEL_Y + 382);
+      ctx.font = '15px Fredoka, Nunito, sans-serif';
+      const sugText = this.homeSuggestions.slice(0, 2).join('  •  ');
+      ctx.fillText(sugText, DESIGN_WIDTH / 2, PANEL_Y + 388);
     }
 
     // --- Achievement message ---
     const totalStars = this.owenStars + this.kianStars;
     const message = getAchievementMessage(totalStars);
     ctx.fillStyle = '#FFD700';
-    ctx.font = 'bold 26px Fredoka, Nunito, sans-serif';
+    ctx.font = 'bold 24px Fredoka, Nunito, sans-serif';
     ctx.shadowColor = 'rgba(255, 215, 0, 0.3)';
     ctx.shadowBlur = 8;
     ctx.fillText(`"${message}"`, DESIGN_WIDTH / 2, PANEL_Y + 420);
     ctx.shadowBlur = 0;
 
-    // --- Research citation ---
+    // --- AAP-aligned time note ---
     ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
-    ctx.font = '14px Fredoka, Nunito, sans-serif';
-    ctx.fillText('Aligned with Zone of Proximal Development research', DESIGN_WIDTH / 2, PANEL_Y + 458);
+    ctx.font = '13px Fredoka, Nunito, sans-serif';
+    const aapNote = this.sessionMinutes <= 15
+      ? `${this.sessionMinutes}min session — within AAP guidelines`
+      : `${this.sessionMinutes}min session — consider shorter next time (AAP: <15min/session)`;
+    ctx.fillText(aapNote, DESIGN_WIDTH / 2, PANEL_Y + 450);
+
+    // --- Research citation ---
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+    ctx.font = '12px Fredoka, Nunito, sans-serif';
+    ctx.fillText('Adaptive difficulty via Zone of Proximal Development (Vygotsky)', DESIGN_WIDTH / 2, PANEL_Y + 468);
 
     ctx.restore();
   }
@@ -607,6 +613,86 @@ export class FinaleScreen implements GameScreen {
         ctx.textAlign = 'center'; // reset
       }
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Domain accuracy bars for a child
+  // ---------------------------------------------------------------------------
+
+  private drawDomainBars(
+    ctx: CanvasRenderingContext2D,
+    domains: DomainSummary[],
+    overallAccuracy: number,
+    name: string,
+    centerX: number,
+    startY: number,
+  ): void {
+    const barW = 140;
+    const barH = 12;
+
+    // Overall accuracy
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.font = '18px Fredoka, Nunito, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`${name}: ${overallAccuracy}%`, centerX, startY - 8);
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+    fillRoundedRect(ctx, centerX - barW / 2, startY + 4, barW, barH, 6);
+    ctx.fillStyle = overallAccuracy >= 70 ? '#33CC33' : overallAccuracy >= 40 ? '#FFD700' : '#FF6B6B';
+    fillRoundedRect(ctx, centerX - barW / 2, startY + 4, barW * Math.min(overallAccuracy / 100, 1), barH, 6);
+
+    // Domain mini-bars
+    if (domains.length > 0) {
+      const miniBarW = 80;
+      const miniBarH = 8;
+      let dy = startY + 24;
+      const domainLabels: Record<string, string> = { color: 'Colors', number: 'Maths', letter: 'Letters', shape: 'Shapes' };
+
+      for (const d of domains.slice(0, 4)) {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.font = '13px Fredoka, Nunito, sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText(domainLabels[d.domain] || d.domain, centerX - miniBarW / 2 - 4, dy + 4);
+
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+        fillRoundedRect(ctx, centerX - miniBarW / 2 + 30, dy, miniBarW, miniBarH, 4);
+
+        const barColor = d.zpd === 'too-easy' ? '#37B1E2' : d.zpd === 'too-hard' ? '#FF6B6B' : '#33CC33';
+        ctx.fillStyle = barColor;
+        fillRoundedRect(ctx, centerX - miniBarW / 2 + 30, dy, miniBarW * Math.min(d.accuracy / 100, 1), miniBarH, 4);
+
+        dy += 16;
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Generate home practice suggestions based on domain performance
+  // ---------------------------------------------------------------------------
+
+  private generateHomeSuggestions(): string[] {
+    const suggestions: string[] = [];
+    const allDomains = [...this.owenDomains, ...this.kianDomains];
+
+    const struggling = allDomains.filter(d => d.zpd === 'too-hard' || d.accuracy < 50);
+    const inZpd = allDomains.filter(d => d.zpd === 'zpd' && d.accuracy < 70);
+
+    for (const d of struggling) {
+      if (d.domain === 'color') suggestions.push('Point out colors during walks and meals');
+      if (d.domain === 'number') suggestions.push('Count objects together at home (toys, steps, snacks)');
+      if (d.domain === 'letter') suggestions.push('Read together and point out letters on signs');
+      if (d.domain === 'shape') suggestions.push('Find shapes around the house (clock=circle, door=rectangle)');
+    }
+    for (const d of inZpd) {
+      if (d.domain === 'number' && !suggestions.some(s => s.includes('Count'))) {
+        suggestions.push('Practice finger counting during play time');
+      }
+    }
+
+    if (suggestions.length === 0) suggestions.push('Great progress! Keep playing and exploring together');
+    return [...new Set(suggestions)];
   }
 
   // ---------------------------------------------------------------------------
