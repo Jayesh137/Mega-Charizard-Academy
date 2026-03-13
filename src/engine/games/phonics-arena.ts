@@ -22,7 +22,7 @@ import { VoiceSystem } from '../voice';
 import { HintLadder } from '../systems/hint-ladder';
 import { FlameMeter } from '../entities/flame-meter';
 import { tracker } from '../../state/tracker.svelte';
-import { starterLetters, letterPaths, type LetterItem } from '../../content/letters';
+import { starterLetters, letterPaths, PHONICS, type LetterItem } from '../../content/letters';
 import {
   DESIGN_WIDTH,
   DESIGN_HEIGHT,
@@ -66,13 +66,6 @@ const BTN_H = 110;
 /** Stagger delay between star appearances (seconds) */
 const STAR_STAGGER = 0.25;
 
-/** Phonics data: letter -> { sound, wrong sound, word example } */
-const PHONICS: Record<string, { sound: string; wrongSound: string; wordExample: string }> = {
-  C: { sound: 'Cuh', wrongSound: 'Sss', wordExample: 'Charizard' },
-  F: { sound: 'Fff', wrongSound: 'Buh', wordExample: 'Fire' },
-  S: { sound: 'Sss', wrongSound: 'Fff', wordExample: 'Star' },
-  B: { sound: 'Buh', wrongSound: 'Duh', wordExample: 'Blue' },
-};
 
 // ---------------------------------------------------------------------------
 // Types

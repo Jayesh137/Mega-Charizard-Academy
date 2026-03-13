@@ -9,7 +9,6 @@ import { ParticlePool, setActivePool } from '../entities/particles';
 import { SpriteAnimator } from '../entities/sprite-animator';
 import { SPRITES } from '../../config/sprites';
 import { VoiceSystem } from '../voice';
-import { VIDEOS } from '../../config/videos';
 import { session } from '../../state/session.svelte';
 import { settings } from '../../state/settings.svelte';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../config/constants';
@@ -69,6 +68,7 @@ export class HubScreen implements GameScreen {
   private evolveFlashAlpha = 0;
   private wingFlutterTimer = 0;
   private blocked: { reason: string; waitUntil?: number } | null = null;
+  private voice: VoiceSystem | null = null;
 
   private get audio(): any { return (this.gameContext as any).audio; }
 
@@ -81,6 +81,11 @@ export class HubScreen implements GameScreen {
     this.evolveFlashAlpha = 0;
     this.wingFlutterTimer = 0;
     this.blocked = null;
+    // Cache VoiceSystem — only create once
+    const audio = (ctx as any).audio;
+    if (audio && !this.voice) {
+      this.voice = new VoiceSystem(audio);
+    }
     setActivePool(this.particles);
     this.particles.clear();
 
@@ -120,17 +125,19 @@ export class HubScreen implements GameScreen {
         }
 
         // Ash evolution line
-        const voice = this.getVoice(ctx);
-        if (voice) {
-          if (evo === 'charmeleon') voice.playAshLine('evolution');
-          else if (evo === 'charizard') voice.ash('evo-charizard');
-          else if (evo === 'megax') voice.ash('evo-mega');
+        if (this.voice) {
+          if (evo === 'charmeleon') this.voice.playAshLine('evolution');
+          else if (evo === 'charizard') this.voice.ash('evo-charizard');
+          else if (evo === 'megax') this.voice.ash('evo-mega');
         }
 
         this.audio?.playSynth('cheer');
       } else {
-        // Play victory roar for game completion (no evolution)
-        ctx.events.emit({ type: 'play-video', src: VIDEOS.victoryRoar });
+        // Play celebration clip for game completion (no evolution)
+        const celebClip = clipManager.pick('celebration');
+        if (celebClip) {
+          ctx.events.emit({ type: 'play-video', src: celebClip.src });
+        }
         this.audio?.playSynth('cheer');
       }
     }
@@ -138,12 +145,11 @@ export class HubScreen implements GameScreen {
     session.currentGame = null;
 
     // Welcome voice
-    const voice = this.getVoice(ctx);
-    if (voice) {
+    if (this.voice) {
       if (session.gamesCompleted === 0) {
-        voice.playAshLine('iconic');
+        this.voice.playAshLine('iconic');
       } else {
-        voice.playAshLine('encourage');
+        this.voice.playAshLine('encourage');
       }
     }
 
@@ -275,6 +281,7 @@ export class HubScreen implements GameScreen {
 
   exit(): void {
     this.particles.clear();
+    this.voice = null;
   }
 
   handleClick(x: number, y: number): void {
@@ -311,7 +318,7 @@ export class HubScreen implements GameScreen {
 
     // Transition after delay
     setTimeout(() => {
-      session.currentScreen = 'game';
+      session.currentScreen = game;
       this.gameContext.screenManager.goTo(game);
     }, 800);
   }
@@ -323,11 +330,6 @@ export class HubScreen implements GameScreen {
   private updateSprite(): void {
     const key = session.evolutionStage === 'megax' ? 'charizard-megax' : session.evolutionStage;
     this.sprite = new SpriteAnimator(SPRITES[key]);
-  }
-
-  private getVoice(ctx: GameContext): VoiceSystem | null {
-    const audio = (ctx as any).audio;
-    return audio ? new VoiceSystem(audio) : null;
   }
 
   private stageIndex(stage: EvolutionStage): number {

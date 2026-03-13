@@ -1,6 +1,10 @@
 // src/state/tracker.svelte.ts
 // Tracks per-child, per-concept performance for adaptive difficulty
 // and within-session spaced repetition.
+// Owen and Kian have SEPARATE rolling windows and concept records.
+// Routing is automatic based on session.currentTurn.
+
+import { session } from './session.svelte';
 
 interface ConceptRecord {
   concept: string;       // e.g., 'red', '3', 'circle', 'C'
@@ -11,18 +15,38 @@ interface ConceptRecord {
   needsRepeat: boolean;  // flagged for spaced repetition
 }
 
+interface ChildTracker {
+  rollingWindow: boolean[];               // last N answers (true=correct)
+  concepts: Map<string, ConceptRecord>;
+  promptCounter: number;
+}
+
+function createChildTracker(): ChildTracker {
+  return {
+    rollingWindow: [],
+    concepts: new Map(),
+    promptCounter: 0,
+  };
+}
+
 function createTracker() {
-  let rollingWindow = $state<boolean[]>([]);  // last N answers (true=correct)
-  let concepts = $state<Map<string, ConceptRecord>>(new Map());
-  let promptCounter = $state(0);
+  let owen = $state<ChildTracker>(createChildTracker());
+  let kian = $state<ChildTracker>(createChildTracker());
+
+  /** Get the active child's tracker based on session.currentTurn ('team' defaults to 'owen') */
+  function active(): ChildTracker {
+    return session.currentTurn === 'kian' ? kian : owen;
+  }
 
   function recordAnswer(concept: string, domain: string, correct: boolean): void {
+    const child = active();
+
     // Rolling window (last 5)
-    rollingWindow = [...rollingWindow.slice(-4), correct];
+    child.rollingWindow = [...child.rollingWindow.slice(-4), correct];
 
     // Per-concept tracking
     const key = `${domain}:${concept}`;
-    const existing = concepts.get(key) ?? {
+    const existing = child.concepts.get(key) ?? {
       concept, domain, attempts: 0, misses: 0, lastSeen: 0, needsRepeat: false,
     };
     existing.attempts++;
@@ -30,16 +54,24 @@ function createTracker() {
       existing.misses++;
       existing.needsRepeat = true;
     }
-    existing.lastSeen = promptCounter;
-    concepts.set(key, existing);
-    concepts = new Map(concepts); // trigger reactivity
-    promptCounter++;
+    existing.lastSeen = child.promptCounter;
+    child.concepts.set(key, existing);
+    child.concepts = new Map(child.concepts); // trigger reactivity
+    child.promptCounter++;
+
+    // Reassign to trigger $state reactivity on the child object
+    if (session.currentTurn === 'kian') {
+      kian = { ...kian };
+    } else {
+      owen = { ...owen };
+    }
   }
 
   /** Get difficulty adjustment: -1 (easier), 0 (maintain), +1 (harder) */
   function getDifficultyAdjustment(): number {
-    if (rollingWindow.length < 3) return 0;
-    const recent = rollingWindow.slice(-5);
+    const child = active();
+    if (child.rollingWindow.length < 3) return 0;
+    const recent = child.rollingWindow.slice(-5);
     const correctCount = recent.filter(Boolean).length;
     if (correctCount >= 4) return 1;   // doing great -> slightly harder
     if (correctCount <= 1) return -1;  // struggling -> slightly easier
@@ -48,9 +80,10 @@ function createTracker() {
 
   /** Get concepts that need spaced repetition (missed + not seen for 2+ prompts) */
   function getRepeatConcepts(domain: string): string[] {
+    const child = active();
     const repeats: string[] = [];
-    for (const [, record] of concepts) {
-      if (record.domain === domain && record.needsRepeat && promptCounter - record.lastSeen >= 2) {
+    for (const [, record] of child.concepts) {
+      if (record.domain === domain && record.needsRepeat && child.promptCounter - record.lastSeen >= 2) {
         repeats.push(record.concept);
       }
     }
@@ -59,20 +92,26 @@ function createTracker() {
 
   /** Mark a concept as repeated (clear needsRepeat flag) */
   function markRepeated(concept: string, domain: string): void {
+    const child = active();
     const key = `${domain}:${concept}`;
-    const record = concepts.get(key);
+    const record = child.concepts.get(key);
     if (record) {
       record.needsRepeat = false;
-      record.lastSeen = promptCounter;
-      concepts.set(key, record);
-      concepts = new Map(concepts);
+      record.lastSeen = child.promptCounter;
+      child.concepts.set(key, record);
+      child.concepts = new Map(child.concepts);
+
+      if (session.currentTurn === 'kian') {
+        kian = { ...kian };
+      } else {
+        owen = { ...owen };
+      }
     }
   }
 
   function reset(): void {
-    rollingWindow = [];
-    concepts = new Map();
-    promptCounter = 0;
+    owen = createChildTracker();
+    kian = createChildTracker();
   }
 
   return {
@@ -82,8 +121,9 @@ function createTracker() {
     markRepeated,
     reset,
     get recentCorrectRate() {
-      if (rollingWindow.length === 0) return 1;
-      return rollingWindow.filter(Boolean).length / rollingWindow.length;
+      const child = active();
+      if (child.rollingWindow.length === 0) return 1;
+      return child.rollingWindow.filter(Boolean).length / child.rollingWindow.length;
     },
   };
 }

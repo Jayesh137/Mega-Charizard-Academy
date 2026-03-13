@@ -62,18 +62,32 @@ export const ASH_LINES: Record<string, AshLine[]> = {
   shape_star: [{ id: 'shape-star', text: "Find the STAR!", file: 'shape-star.mp3', category: 'shape' }],
   shape_diamond: [{ id: 'shape-diamond', text: "Find the DIAMOND!", file: 'shape-diamond.mp3', category: 'shape' }],
   shape_hexagon: [{ id: 'shape-hexagon', text: "Find the HEXAGON!", file: 'shape-hexagon.mp3', category: 'shape' }],
+  shape_heart: [{ id: 'shape-heart-1', text: "Heart! Find the heart!", file: 'shape-heart-1.mp3', category: 'shape' }],
+  shape_oval: [{ id: 'shape-oval-1', text: "Oval! Find the oval!", file: 'shape-oval-1.mp3', category: 'shape' }],
 
   // --- Letter prompts ---
   letter_c: [{ id: 'letter-c', text: "What letter is this? C! C for Charizard!", file: 'letter-c.mp3', category: 'letter' }],
   letter_f: [{ id: 'letter-f', text: "What letter is this? F! F for Fire!", file: 'letter-f.mp3', category: 'letter' }],
   letter_s: [{ id: 'letter-s', text: "What letter is this? S! S for Star!", file: 'letter-s.mp3', category: 'letter' }],
   letter_b: [{ id: 'letter-b', text: "What letter is this? B! B for Blue!", file: 'letter-b.mp3', category: 'letter' }],
+  letter_m: [{ id: 'letter-m-1', text: "M! M for Mega!", file: 'letter-m-1.mp3', category: 'letter' }],
+  letter_p: [{ id: 'letter-p-1', text: "P! P for Pikachu!", file: 'letter-p-1.mp3', category: 'letter' }],
+  letter_t: [{ id: 'letter-t-1', text: "T! T for Thunder!", file: 'letter-t-1.mp3', category: 'letter' }],
+  letter_r: [{ id: 'letter-r-1', text: "R! R for Raichu!", file: 'letter-r-1.mp3', category: 'letter' }],
+  letter_d: [{ id: 'letter-d-1', text: "D! D for Dragon!", file: 'letter-d-1.mp3', category: 'letter' }],
+  letter_a: [{ id: 'letter-a-1', text: "A! A for Ash!", file: 'letter-a-1.mp3', category: 'letter' }],
 
   // --- Phonics sounds ---
   phonics_c: [{ id: 'phonics-c', text: "What sound does C make? Cuh!", file: 'phonics-c.mp3', category: 'letter' }],
   phonics_f: [{ id: 'phonics-f', text: "What sound does F make? Fff!", file: 'phonics-f.mp3', category: 'letter' }],
   phonics_s: [{ id: 'phonics-s', text: "What sound does S make? Sss!", file: 'phonics-s.mp3', category: 'letter' }],
   phonics_b: [{ id: 'phonics-b', text: "What sound does B make? Buh!", file: 'phonics-b.mp3', category: 'letter' }],
+  phonics_m: [{ id: 'phonics-m-1', text: "Mmm! Like Mega!", file: 'phonics-m-1.mp3', category: 'letter' }],
+  phonics_p: [{ id: 'phonics-p-1', text: "Puh! Like Pikachu!", file: 'phonics-p-1.mp3', category: 'letter' }],
+  phonics_t: [{ id: 'phonics-t-1', text: "Tuh! Like Thunder!", file: 'phonics-t-1.mp3', category: 'letter' }],
+  phonics_r: [{ id: 'phonics-r-1', text: "Rrr! Like Raichu!", file: 'phonics-r-1.mp3', category: 'letter' }],
+  phonics_d: [{ id: 'phonics-d-1', text: "Duh! Like Dragon!", file: 'phonics-d-1.mp3', category: 'letter' }],
+  phonics_a: [{ id: 'phonics-a-1', text: "Ahh! Like Ash!", file: 'phonics-a-1.mp3', category: 'letter' }],
 
   // --- Correct reactions ---
   correct: [

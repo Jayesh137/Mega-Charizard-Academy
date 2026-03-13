@@ -20,6 +20,12 @@ export const starterLetters: LetterItem[] = [
   { letter: 'F', word: 'Fire', phonicsSound: 'ff', icon: 'flame', voiceFile: 'letter-f', starCount: { little: 6, big: 10 } },
   { letter: 'S', word: 'Star', phonicsSound: 'ss', icon: 'star', voiceFile: 'letter-s', starCount: { little: 5, big: 9 } },
   { letter: 'B', word: 'Blue', phonicsSound: 'bb', icon: 'colorBlob', voiceFile: 'letter-b', starCount: { little: 6, big: 10 } },
+  { letter: 'M', word: 'Mega', phonicsSound: 'mm', icon: 'star', voiceFile: 'letter-m', starCount: { little: 5, big: 8 } },
+  { letter: 'P', word: 'Pikachu', phonicsSound: 'pp', icon: 'flame', voiceFile: 'letter-p', starCount: { little: 5, big: 9 } },
+  { letter: 'T', word: 'Thunder', phonicsSound: 'tt', icon: 'star', voiceFile: 'letter-t', starCount: { little: 6, big: 9 } },
+  { letter: 'R', word: 'Raichu', phonicsSound: 'rr', icon: 'flame', voiceFile: 'letter-r', starCount: { little: 5, big: 8 } },
+  { letter: 'D', word: 'Dragon', phonicsSound: 'dd', icon: 'star', voiceFile: 'letter-d', starCount: { little: 6, big: 10 } },
+  { letter: 'A', word: 'Ash', phonicsSound: 'ah', icon: 'character', voiceFile: 'letter-a', starCount: { little: 5, big: 8 } },
 ];
 
 export const letterDifficulty: Record<'little' | 'big', LetterDifficulty> = {
@@ -100,4 +106,76 @@ export const letterPaths: Record<string, { x: number; y: number }[]> = {
     { x: 0.45, y: 0.50 },  // middle bar middle
     { x: 0.62, y: 0.50 },  // middle bar end
   ],
+  M: [
+    // Left stroke up, diagonal down to middle, diagonal up, right stroke down
+    { x: 0.15, y: 0.92 },  // bottom-left
+    { x: 0.15, y: 0.08 },  // top-left
+    { x: 0.50, y: 0.55 },  // middle valley
+    { x: 0.85, y: 0.08 },  // top-right
+    { x: 0.85, y: 0.92 },  // bottom-right
+  ],
+  P: [
+    // Vertical stroke up, then curve right across top and back to middle
+    { x: 0.25, y: 0.92 },  // bottom of stem
+    { x: 0.25, y: 0.08 },  // top of stem
+    { x: 0.50, y: 0.08 },  // top bar starts
+    { x: 0.70, y: 0.20 },  // curve out right
+    { x: 0.70, y: 0.38 },  // curve down
+    { x: 0.25, y: 0.48 },  // back to mid-stem
+  ],
+  T: [
+    // Horizontal stroke across top, vertical stroke down center
+    { x: 0.15, y: 0.08 },  // top-left
+    { x: 0.50, y: 0.08 },  // top-center (junction)
+    { x: 0.85, y: 0.08 },  // top-right
+    { x: 0.50, y: 0.08 },  // back to junction
+    { x: 0.50, y: 0.50 },  // mid-stem
+    { x: 0.50, y: 0.92 },  // bottom of stem
+  ],
+  R: [
+    // Like P but with a diagonal leg from the bump back to bottom-right
+    { x: 0.25, y: 0.92 },  // bottom of stem
+    { x: 0.25, y: 0.08 },  // top of stem
+    { x: 0.50, y: 0.08 },  // top bar starts
+    { x: 0.70, y: 0.20 },  // curve out right
+    { x: 0.70, y: 0.35 },  // curve down
+    { x: 0.25, y: 0.48 },  // back to mid-stem
+    { x: 0.70, y: 0.92 },  // diagonal leg to bottom-right
+  ],
+  D: [
+    // Vertical stroke, then curve out right and back
+    { x: 0.25, y: 0.08 },  // top of stem
+    { x: 0.25, y: 0.50 },  // mid-stem
+    { x: 0.25, y: 0.92 },  // bottom of stem
+    { x: 0.50, y: 0.92 },  // bottom curve start
+    { x: 0.75, y: 0.70 },  // curve out right lower
+    { x: 0.75, y: 0.30 },  // curve out right upper
+    { x: 0.50, y: 0.08 },  // curve back top
+    { x: 0.25, y: 0.08 },  // close at top of stem
+  ],
+  A: [
+    // Diagonal up to peak, diagonal down, horizontal bar in middle
+    { x: 0.15, y: 0.92 },  // bottom-left
+    { x: 0.50, y: 0.08 },  // peak
+    { x: 0.85, y: 0.92 },  // bottom-right
+    { x: 0.68, y: 0.52 },  // bar right end
+    { x: 0.32, y: 0.52 },  // bar left end
+  ],
+};
+
+// ---------------------------------------------------------------------------
+// Centralised phonics data
+// ---------------------------------------------------------------------------
+
+export const PHONICS: Record<string, { sound: string; wrongSound: string; wordExample: string }> = {
+  C: { sound: 'Cuh', wrongSound: 'Sss', wordExample: 'Charizard' },
+  F: { sound: 'Fff', wrongSound: 'Buh', wordExample: 'Fire' },
+  S: { sound: 'Sss', wrongSound: 'Fff', wordExample: 'Star' },
+  B: { sound: 'Buh', wrongSound: 'Duh', wordExample: 'Blue' },
+  M: { sound: 'Mmm', wrongSound: 'Nnn', wordExample: 'Mega' },
+  P: { sound: 'Puh', wrongSound: 'Buh', wordExample: 'Pikachu' },
+  T: { sound: 'Tuh', wrongSound: 'Duh', wordExample: 'Thunder' },
+  R: { sound: 'Rrr', wrongSound: 'Lll', wordExample: 'Raichu' },
+  D: { sound: 'Duh', wrongSound: 'Tuh', wordExample: 'Dragon' },
+  A: { sound: 'Ahh', wrongSound: 'Ehh', wordExample: 'Ash' },
 };

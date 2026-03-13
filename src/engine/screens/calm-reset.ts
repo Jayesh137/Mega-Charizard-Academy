@@ -91,9 +91,9 @@ export class CalmResetScreen implements GameScreen {
     const spriteKey = session.evolutionStage === 'megax' ? 'charizard-megax' : session.evolutionStage;
     this.sprite = new SpriteAnimator(SPRITES[spriteKey]);
 
-    // Wire up VoiceSystem from audio manager
+    // Cache VoiceSystem — only create once
     const audio = (ctx as any).audio;
-    if (audio) {
+    if (audio && !this.voice) {
       this.voice = new VoiceSystem(audio);
     }
 
@@ -259,6 +259,7 @@ export class CalmResetScreen implements GameScreen {
 
   exit(): void {
     this.particles.clear();
+    this.voice = null;
   }
 
   handleClick(_x: number, _y: number): void {

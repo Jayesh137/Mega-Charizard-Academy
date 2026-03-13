@@ -2,6 +2,6 @@
 
 export type Intensity = 'calm' | 'normal' | 'hype';
 export type TurnType = 'owen' | 'kian' | 'team';
-export type ScreenName = 'loading' | 'opening' | 'hub' | 'game' | 'calm-reset' | 'finale';
+export type ScreenName = 'loading' | 'opening' | 'hub' | 'calm-reset' | 'finale' | GameName;
 export type GameName = 'flame-colors' | 'fireball-count' | 'evolution-tower' | 'phonics-arena' | 'evolution-challenge';
 export type EvolutionStage = 'charmander' | 'charmeleon' | 'charizard' | 'megax';

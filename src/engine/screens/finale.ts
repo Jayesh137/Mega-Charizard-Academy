@@ -24,6 +24,7 @@ export class FinaleScreen implements GameScreen {
   private spriteX = -300; // start offscreen left
   private showPlayAgain = false;
   private gameContext!: GameContext;
+  private voice: VoiceSystem | null = null;
 
   // Evolution stage sprites for the showcase
   private stageSprites: SpriteAnimator[] = [
@@ -52,13 +53,18 @@ export class FinaleScreen implements GameScreen {
       ctx.events.emit({ type: 'play-video', src: finaleClip.src });
     }
 
-    // Play Ash celebration line
+    // Cache VoiceSystem — only create once
     const audio = (ctx as any).audio;
-    if (audio) {
-      const voice = new VoiceSystem(audio);
-      voice.playAshLine('correct');
+    if (audio && !this.voice) {
+      this.voice = new VoiceSystem(audio);
+    }
+
+    // Play Ash celebration line
+    if (this.voice) {
+      this.voice.playAshLine('correct');
       // Delayed iconic line
-      setTimeout(() => voice.playAshLine('iconic'), 2000);
+      const v = this.voice;
+      setTimeout(() => v.playAshLine('iconic'), 2000);
     }
   }
 
@@ -171,6 +177,7 @@ export class FinaleScreen implements GameScreen {
 
   exit(): void {
     this.particles.clear();
+    this.voice = null;
   }
 
   handleClick(_x: number, _y: number): void {

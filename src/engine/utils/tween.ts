@@ -43,6 +43,10 @@ export class Tween {
       this.config.onComplete?.();
     }
   }
+
+  cancel(): void {
+    this.done = true;
+  }
 }
 
 export class TweenManager {
@@ -60,6 +64,7 @@ export class TweenManager {
   }
 
   clear(): void {
+    for (const tween of this.tweens) tween.cancel();
     this.tweens = [];
   }
 }

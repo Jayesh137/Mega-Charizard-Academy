@@ -31,3 +31,37 @@ export const colorDifficulty: Record<'little' | 'big', ColorDifficulty> = {
   little: { targetCount: 2, useSet: 'primary', showHint: true, driftSpeed: 20 },
   big: { targetCount: 4, useSet: 'both', showHint: false, driftSpeed: 40 },
 };
+
+// ---------------------------------------------------------------------------
+// Color mixing pairs (primary → secondary discovery)
+// ---------------------------------------------------------------------------
+
+export interface ColorMixPair {
+  a: string;       // first primary color name
+  b: string;       // second primary color name
+  result: string;  // resulting secondary color name
+}
+
+export const colorMixing: ColorMixPair[] = [
+  { a: 'blue', b: 'yellow', result: 'green' },
+  { a: 'red', b: 'yellow', result: 'orange' },
+  { a: 'red', b: 'blue', result: 'purple' },
+];
+
+// ---------------------------------------------------------------------------
+// Color shades (light / dark variants for shade matching)
+// ---------------------------------------------------------------------------
+
+export interface ColorShade {
+  light: string;  // hex
+  dark: string;   // hex
+}
+
+export const colorShades: Record<string, ColorShade> = {
+  red:    { light: '#ff6666', dark: '#cc0000' },
+  blue:   { light: '#6699ff', dark: '#0033cc' },
+  yellow: { light: '#ffff66', dark: '#ccaa00' },
+  green:  { light: '#66ff66', dark: '#009900' },
+  orange: { light: '#ffaa66', dark: '#cc6600' },
+  purple: { light: '#cc66ff', dark: '#6600cc' },
+};

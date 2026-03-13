@@ -1,9 +1,14 @@
 // src/engine/games/flame-colors.ts
-// Mini-game 1: Dragon Gem Hunt — Color Recognition
+// Mini-game 1: Dragon Gem Hunt — Color Recognition, Mixing & Shade Matching
 //
 // MCX sprite hovers in the top-right corner. Colored gem targets appear on screen.
 // Voice says "Red. Find red!" — player taps the matching gem.
 // Educational voice follows the Three-Label Rule throughout.
+//
+// Modes:
+//   'find'   — classic color recognition (tap the named gem)
+//   'mixing' — two gems merge to reveal a secondary color, kid picks result (every 3rd prompt)
+//   'shade'  — light/dark shade variants shown, kid picks the named shade (every 4th prompt)
 //
 // Owen (2.5yo): 2 choices, primary colors, 200px gems, stable positions, glow hints
 // Kian (4yo):   3-4 choices, extended palette, 160px gems, gentle drift, speed rounds
@@ -23,7 +28,10 @@ import {
   primaryColors,
   allColors,
   colorDifficulty,
+  colorMixing,
+  colorShades,
   type ColorItem,
+  type ColorMixPair,
 } from '../../content/colors';
 import {
   DESIGN_WIDTH,
@@ -56,6 +64,15 @@ const GEM_RADIUS_KIAN = 80;  // 160px diameter
 /** Success echo celebrations */
 const SUCCESS_ECHOES = ['flame!', 'gem!', 'power!'];
 
+/** Mixing animation timing */
+const MIXING_MERGE_DURATION = 1.5;  // seconds for gems to slide together
+const MIXING_FLASH_DURATION = 0.3;  // flash/burst overlay
+const MIXING_REVEAL_DURATION = 0.5; // result gem scale-in
+
+/** Choice button dimensions (mixing & shade modes) */
+const BTN_W = 280;
+const BTN_H = 100;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -74,7 +91,28 @@ interface GemTarget {
   vy: number;
 }
 
-type GamePhase = 'banner' | 'engage' | 'prompt' | 'play' | 'celebrate' | 'next';
+/** Choice button for mixing and shade modes */
+interface ChoiceButton {
+  label: string;
+  colorHex: string;    // fill color for the gem swatch
+  correct: boolean;
+  x: number;
+  y: number;
+  shakeTimer: number;
+}
+
+type PromptMode = 'find' | 'mixing' | 'shade';
+
+type GamePhase =
+  | 'banner'
+  | 'engage'
+  | 'prompt'
+  | 'play'
+  | 'mixing-animate'   // gems sliding together
+  | 'mixing-flash'     // merge burst
+  | 'mixing-reveal'    // result gem appears, then choice
+  | 'celebrate'
+  | 'next';
 
 // ---------------------------------------------------------------------------
 // FlameColorsGame (Dragon Gem Hunt)
@@ -101,6 +139,30 @@ export class FlameColorsGame implements GameScreen {
   private inputLocked = true;
   private lastColorName = '';
 
+  // Mode state
+  private mode: PromptMode = 'find';
+
+  // Mixing state
+  private mixPair: ColorMixPair | null = null;
+  private mixGemA: GemTarget | null = null;
+  private mixGemB: GemTarget | null = null;
+  private mixResultGem: GemTarget | null = null;
+  private mixStartAx = 0;
+  private mixStartBx = 0;
+  private mixCenterX = 0;
+  private mixCenterY = 0;
+  private mixFlashAlpha = 0;
+  private mixResultScale = 0;
+
+  // Shade state
+  private shadeTarget: 'light' | 'dark' = 'light';
+  private shadeBaseColor = '';
+
+  // Choice buttons (used in mixing + shade modes)
+  private choices: ChoiceButton[] = [];
+  private choiceAnswered = false;
+  private choiceFlashTimer = 0;
+
   // Audio shortcut
   private get audio() { return this.gameContext.audio; }
 
@@ -108,6 +170,26 @@ export class FlameColorsGame implements GameScreen {
   private get isOwen(): boolean { return session.currentTurn === 'owen'; }
   private get difficulty() {
     return this.isOwen ? colorDifficulty.little : colorDifficulty.big;
+  }
+
+  // -----------------------------------------------------------------------
+  // Mode selection
+  // -----------------------------------------------------------------------
+
+  /**
+   * Decide mode for current promptIndex.
+   * Every 3rd prompt (index 2, 5, 8...): mixing
+   * Every 4th prompt (index 3, 7, 11...): shade (but skip if mixing just happened)
+   * Otherwise: find
+   */
+  private pickMode(): PromptMode {
+    if (this.promptIndex % 3 === 2) {
+      return 'mixing';
+    }
+    if (this.promptIndex % 4 === 3) {
+      return 'shade';
+    }
+    return 'find';
   }
 
   // -----------------------------------------------------------------------
@@ -159,6 +241,15 @@ export class FlameColorsGame implements GameScreen {
     this.phaseTimer = 0;
     this.inputLocked = true;
     this.gems = [];
+    this.choices = [];
+    this.choiceAnswered = false;
+    this.choiceFlashTimer = 0;
+    this.mixPair = null;
+    this.mixGemA = null;
+    this.mixGemB = null;
+    this.mixResultGem = null;
+    this.mixFlashAlpha = 0;
+    this.mixResultScale = 0;
 
     // Show banner overlay
     this.gameContext.events.emit({ type: 'show-banner', turn });
@@ -182,6 +273,20 @@ export class FlameColorsGame implements GameScreen {
   }
 
   private startPrompt(): void {
+    this.mode = this.pickMode();
+
+    if (this.mode === 'mixing') {
+      this.startMixingAnimate();
+    } else if (this.mode === 'shade') {
+      this.startShadePrompt();
+    } else {
+      this.startFindPrompt();
+    }
+  }
+
+  // ===================== FIND MODE (original) =============================
+
+  private startFindPrompt(): void {
     this.phase = 'prompt';
     this.phaseTimer = 0;
 
@@ -212,6 +317,199 @@ export class FlameColorsGame implements GameScreen {
     this.phaseTimer = 0;
     this.inputLocked = false;
   }
+
+  // ===================== MIXING MODE ======================================
+
+  private startMixingAnimate(): void {
+    this.phase = 'mixing-animate';
+    this.phaseTimer = 0;
+    this.inputLocked = true;
+
+    // Pick a random mixing pair
+    const pair = colorMixing[Math.floor(Math.random() * colorMixing.length)];
+    this.mixPair = pair;
+
+    // Look up hex colors for the pair
+    const colorA = allColors.find(c => c.name === pair.a) ?? primaryColors[0];
+    const colorB = allColors.find(c => c.name === pair.b) ?? primaryColors[1];
+    const colorResult = allColors.find(c => c.name === pair.result) ?? allColors[0];
+
+    // Set current color to the result (for celebration particles, etc.)
+    this.currentColor = colorResult;
+
+    const radius = this.isOwen ? GEM_RADIUS_OWEN : GEM_RADIUS_KIAN;
+    this.mixCenterX = DESIGN_WIDTH / 2;
+    this.mixCenterY = DESIGN_HEIGHT * 0.4;
+
+    // Start positions: left and right
+    this.mixStartAx = this.mixCenterX - 300;
+    this.mixStartBx = this.mixCenterX + 300;
+
+    this.mixGemA = this.makeGemFromHex(colorA.hex, colorA.name, radius);
+    this.mixGemA.x = this.mixStartAx;
+    this.mixGemA.y = this.mixCenterY;
+
+    this.mixGemB = this.makeGemFromHex(colorB.hex, colorB.name, radius);
+    this.mixGemB.x = this.mixStartBx;
+    this.mixGemB.y = this.mixCenterY;
+
+    this.mixResultGem = this.makeGemFromHex(colorResult.hex, colorResult.name, radius);
+    this.mixResultGem.x = this.mixCenterX;
+    this.mixResultGem.y = this.mixCenterY;
+
+    this.mixFlashAlpha = 0;
+    this.mixResultScale = 0;
+
+    // Voice: "Blue and yellow make...?"
+    this.voice?.narrate(`${pair.a} and ${pair.b} make...?`);
+
+    this.audio?.playSynth('pop');
+  }
+
+  private startMixingFlash(): void {
+    this.phase = 'mixing-flash';
+    this.phaseTimer = 0;
+    this.mixFlashAlpha = 1.0;
+
+    // Big particle burst at merge point in result color
+    const resultHex = this.mixResultGem?.color ?? '#ffffff';
+    this.particles.burst(this.mixCenterX, this.mixCenterY, 60, resultHex, 250, 1.2);
+    this.particles.burst(this.mixCenterX, this.mixCenterY, 30, '#ffffff', 150, 0.6);
+
+    // Additional colored sparks from source colors
+    if (this.mixGemA) {
+      this.particles.burst(this.mixCenterX, this.mixCenterY, 15, this.mixGemA.color, 120, 0.8);
+    }
+    if (this.mixGemB) {
+      this.particles.burst(this.mixCenterX, this.mixCenterY, 15, this.mixGemB.color, 120, 0.8);
+    }
+
+    this.audio?.playSynth('correct-chime');
+  }
+
+  private startMixingReveal(): void {
+    this.phase = 'mixing-reveal';
+    this.phaseTimer = 0;
+    this.mixResultScale = 0;
+  }
+
+  private startMixingChoice(): void {
+    this.phase = 'play';
+    this.phaseTimer = 0;
+    this.inputLocked = false;
+    this.choiceAnswered = false;
+    this.choiceFlashTimer = 0;
+
+    const pair = this.mixPair!;
+    const resultColor = allColors.find(c => c.name === pair.result) ?? allColors[0];
+
+    // Build choices: correct result + distractors
+    const choiceCount = this.isOwen ? 2 : 3;
+    this.choices = [];
+
+    // Correct choice
+    this.choices.push({
+      label: resultColor.name.toUpperCase(),
+      colorHex: resultColor.hex,
+      correct: true,
+      x: 0, y: 0,
+      shakeTimer: 0,
+    });
+
+    // Wrong choices: pick from colors that are NOT the result or source colors
+    const wrongPool = allColors.filter(
+      c => c.name !== pair.result && c.name !== pair.a && c.name !== pair.b,
+    );
+    const shuffledWrong = [...wrongPool].sort(() => Math.random() - 0.5);
+    for (let i = 0; i < choiceCount - 1 && i < shuffledWrong.length; i++) {
+      this.choices.push({
+        label: shuffledWrong[i].name.toUpperCase(),
+        colorHex: shuffledWrong[i].hex,
+        correct: false,
+        x: 0, y: 0,
+        shakeTimer: 0,
+      });
+    }
+
+    // Shuffle
+    this.choices.sort(() => Math.random() - 0.5);
+
+    // Position choices at bottom
+    this.positionChoices();
+
+    // Initialize hint ladder for the result color
+    this.hintLadder.startPrompt(pair.result);
+
+    // Voice: "What color did we make?"
+    this.voice?.narrate('What color did we make?');
+  }
+
+  // ===================== SHADE MODE =======================================
+
+  private startShadePrompt(): void {
+    this.phase = 'prompt';
+    this.phaseTimer = 0;
+
+    // Pick a base color that has shade definitions
+    const shadeColorNames = Object.keys(colorShades);
+    // Filter by difficulty: Owen = primary only, Kian = all
+    const available = this.isOwen
+      ? shadeColorNames.filter(n => primaryColors.some(p => p.name === n))
+      : shadeColorNames;
+
+    this.shadeBaseColor = available[Math.floor(Math.random() * available.length)];
+    this.shadeTarget = Math.random() < 0.5 ? 'light' : 'dark';
+
+    const shades = colorShades[this.shadeBaseColor];
+    const correctHex = this.shadeTarget === 'light' ? shades.light : shades.dark;
+    const wrongHex = this.shadeTarget === 'light' ? shades.dark : shades.light;
+
+    // Set currentColor for celebration particles
+    const baseColorItem = allColors.find(c => c.name === this.shadeBaseColor);
+    this.currentColor = baseColorItem ?? primaryColors[0];
+
+    // Build gem targets for shade matching (gems, not buttons)
+    const radius = this.isOwen ? GEM_RADIUS_OWEN : GEM_RADIUS_KIAN;
+    this.gems = [];
+
+    // Correct shade gem
+    const correctLabel = `${this.shadeTarget} ${this.shadeBaseColor}`;
+    this.gems.push(this.makeGemFromHex(correctHex, correctLabel, radius));
+
+    // Wrong shade gem
+    const wrongLabel = `${this.shadeTarget === 'light' ? 'dark' : 'light'} ${this.shadeBaseColor}`;
+    this.gems.push(this.makeGemFromHex(wrongHex, wrongLabel, radius));
+
+    // Kian: add a third distractor (a different color entirely)
+    if (!this.isOwen) {
+      const distractors = allColors.filter(c => c.name !== this.shadeBaseColor);
+      const distractor = distractors[Math.floor(Math.random() * distractors.length)];
+      this.gems.push(this.makeGemFromHex(distractor.hex, distractor.name, radius));
+    }
+
+    // Shuffle and position
+    this.gems.sort(() => Math.random() - 0.5);
+    this.positionGems();
+
+    // Initialize hint ladder
+    this.hintLadder.startPrompt(correctLabel);
+
+    // Voice prompt
+    const shadeWord = this.shadeTarget.toUpperCase();
+    this.voice?.narrate(`Find the ${shadeWord} ${this.shadeBaseColor}!`);
+    this.audio?.playSynth('pop');
+
+    // Transition to play
+    setTimeout(() => {
+      if (this.phase === 'prompt') {
+        this.startPlay();
+      }
+    }, 800);
+  }
+
+  // -----------------------------------------------------------------------
+  // Celebrate / Next / End
+  // -----------------------------------------------------------------------
 
   private startCelebrate(): void {
     this.phase = 'celebrate';
@@ -318,6 +616,23 @@ export class FlameColorsGame implements GameScreen {
     };
   }
 
+  /** Create a gem from a raw hex + name (for mixing/shade where we bypass ColorItem) */
+  private makeGemFromHex(hex: string, name: string, radius: number): GemTarget {
+    const driftSpeed = this.isOwen ? 0 : this.difficulty.driftSpeed * 0.3;
+    return {
+      x: 0, y: 0,
+      color: hex,
+      colorName: name,
+      radius,
+      alive: true,
+      dimmed: false,
+      bobPhase: randomRange(0, Math.PI * 2),
+      sparklePhase: randomRange(0, Math.PI * 2),
+      vx: randomRange(-driftSpeed, driftSpeed),
+      vy: randomRange(-driftSpeed * 0.5, driftSpeed * 0.5),
+    };
+  }
+
   private positionGems(): void {
     const count = this.gems.length;
     // Center gems in the lower 2/3 of the screen, spread horizontally
@@ -339,6 +654,20 @@ export class FlameColorsGame implements GameScreen {
     }
   }
 
+  /** Position choice buttons at the bottom of the screen */
+  private positionChoices(): void {
+    const count = this.choices.length;
+    const gap = 40;
+    const totalW = count * BTN_W + (count - 1) * gap;
+    const startX = (DESIGN_WIDTH - totalW) / 2;
+    const y = DESIGN_HEIGHT * 0.82;
+
+    for (let i = 0; i < count; i++) {
+      this.choices[i].x = startX + i * (BTN_W + gap);
+      this.choices[i].y = y;
+    }
+  }
+
   // -----------------------------------------------------------------------
   // Hit detection
   // -----------------------------------------------------------------------
@@ -350,8 +679,13 @@ export class FlameColorsGame implements GameScreen {
     return dx * dx + dy * dy <= (gem.radius + 25) * (gem.radius + 25);
   }
 
+  private isChoiceHit(choice: ChoiceButton, x: number, y: number): boolean {
+    return x >= choice.x && x <= choice.x + BTN_W &&
+           y >= choice.y && y <= choice.y + BTN_H;
+  }
+
   // -----------------------------------------------------------------------
-  // Correct / Wrong / Auto-complete
+  // Correct / Wrong / Auto-complete (find mode)
   // -----------------------------------------------------------------------
 
   private handleCorrect(gem: GemTarget, hinted: boolean): void {
@@ -415,9 +749,15 @@ export class FlameColorsGame implements GameScreen {
   }
 
   private autoComplete(): void {
-    const correctGem = this.gems.find(
-      g => g.colorName === this.currentColor?.name && g.alive,
-    );
+    if (this.mode === 'mixing') {
+      this.autoCompleteMixing();
+      return;
+    }
+
+    const correctGem = this.mode === 'shade'
+      ? this.gems.find(g => g.colorName === `${this.shadeTarget} ${this.shadeBaseColor}` && g.alive)
+      : this.gems.find(g => g.colorName === this.currentColor?.name && g.alive);
+
     if (!correctGem) return;
 
     // Record as auto-complete
@@ -438,6 +778,101 @@ export class FlameColorsGame implements GameScreen {
     }
 
     this.startCelebrate();
+  }
+
+  // -----------------------------------------------------------------------
+  // Correct / Wrong for mixing choice buttons
+  // -----------------------------------------------------------------------
+
+  private handleMixingChoiceClick(x: number, y: number): void {
+    if (this.choiceAnswered) return;
+
+    for (const choice of this.choices) {
+      if (!this.isChoiceHit(choice, x, y)) continue;
+
+      if (choice.correct) {
+        this.choiceAnswered = true;
+        this.choiceFlashTimer = 1.0;
+        this.inputLocked = true;
+
+        const resultName = this.mixPair!.result;
+        tracker.recordAnswer(resultName, 'color', true);
+        this.flameMeter.addCharge(2);
+        this.consecutiveCorrect++;
+
+        this.audio?.playSynth('correct-chime');
+        this.voice?.ashCorrect();
+
+        // Celebratory voice: "GREEN! We made green!"
+        setTimeout(() => {
+          this.voice?.narrate(`${resultName.toUpperCase()}! We made ${resultName}!`);
+        }, 600);
+
+        // Cross-game reinforcement
+        this.voice?.crossReinforcColor(resultName);
+
+        this.particles.burst(
+          choice.x + BTN_W / 2, choice.y + BTN_H / 2,
+          30, choice.colorHex, 150, 0.8,
+        );
+      } else {
+        const resultName = this.mixPair!.result;
+        tracker.recordAnswer(resultName, 'color', false);
+        this.consecutiveCorrect = 0;
+
+        this.audio?.playSynth('wrong-bonk');
+        choice.shakeTimer = 0.4;
+        this.voice?.ashWrong();
+
+        this.hintLadder.onMiss();
+
+        this.particles.burst(
+          choice.x + BTN_W / 2, choice.y + BTN_H / 2,
+          6, '#ff6666', 40, 0.3,
+        );
+
+        if (this.hintLadder.autoCompleted) {
+          this.autoCompleteMixing();
+        }
+      }
+      return;
+    }
+  }
+
+  private autoCompleteMixing(): void {
+    this.choiceAnswered = true;
+    this.choiceFlashTimer = 1.0;
+    this.inputLocked = true;
+
+    const resultName = this.mixPair?.result ?? '';
+    tracker.recordAnswer(resultName, 'color', true);
+    this.flameMeter.addCharge(0.5);
+    this.audio?.playSynth('pop');
+
+    const encClip = clipManager.pick('encouragement');
+    if (encClip) {
+      this.gameContext.events.emit({ type: 'play-video', src: encClip.src });
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Correct / Wrong for shade mode (uses gem tapping, like find mode)
+  // -----------------------------------------------------------------------
+
+  private handleShadeClick(x: number, y: number): void {
+    for (const gem of this.gems) {
+      if (!gem.alive || gem.dimmed) continue;
+      if (!this.isGemHit(gem, x, y)) continue;
+
+      const correctLabel = `${this.shadeTarget} ${this.shadeBaseColor}`;
+      if (gem.colorName === correctLabel) {
+        const hinted = this.hintLadder.hintLevel > 0;
+        this.handleCorrect(gem, hinted);
+      } else {
+        this.handleWrong(gem);
+      }
+      return;
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -469,29 +904,28 @@ export class FlameColorsGame implements GameScreen {
         break;
 
       case 'play':
-        this.updateGems(dt);
-        this.updateHints(dt);
+        if (this.mode === 'mixing') {
+          this.updateMixingChoice(dt);
+        } else {
+          this.updateGems(dt);
+          this.updateHints(dt);
+        }
+        break;
+
+      case 'mixing-animate':
+        this.updateMixingAnimate(dt);
+        break;
+
+      case 'mixing-flash':
+        this.updateMixingFlash(dt);
+        break;
+
+      case 'mixing-reveal':
+        this.updateMixingReveal(dt);
         break;
 
       case 'celebrate':
-        // Ambient celebration sparks
-        if (this.currentColor && Math.random() < 0.3) {
-          this.particles.spawn({
-            x: randomRange(200, DESIGN_WIDTH - 200),
-            y: randomRange(200, DESIGN_HEIGHT - 200),
-            vx: randomRange(-30, 30),
-            vy: randomRange(-60, -20),
-            color: this.currentColor.hex,
-            size: randomRange(2, 6),
-            lifetime: randomRange(0.3, 0.7),
-            drag: 0.96,
-            fadeOut: true,
-            shrink: true,
-          });
-        }
-        if (this.phaseTimer >= CELEBRATE_DURATION) {
-          this.startNext();
-        }
+        this.updateCelebrate(dt);
         break;
     }
   }
@@ -530,7 +964,11 @@ export class FlameColorsGame implements GameScreen {
 
       // Level 1: voice repeat
       if (level === 1 && this.currentColor) {
-        this.voice?.hintRepeat(this.currentColor.name);
+        if (this.mode === 'shade') {
+          this.voice?.hintRepeat(`${this.shadeTarget} ${this.shadeBaseColor}`);
+        } else {
+          this.voice?.hintRepeat(this.currentColor.name);
+        }
       }
     }
 
@@ -538,6 +976,141 @@ export class FlameColorsGame implements GameScreen {
     if (this.hintLadder.autoCompleted && !this.inputLocked) {
       this.inputLocked = true;
       this.autoComplete();
+    }
+  }
+
+  // ===================== Mixing animation updates =========================
+
+  private updateMixingAnimate(dt: number): void {
+    if (!this.mixGemA || !this.mixGemB) return;
+
+    // Lerp gems toward center
+    const t = Math.min(this.phaseTimer / MIXING_MERGE_DURATION, 1.0);
+    // Ease-in-out: smoothstep
+    const s = t * t * (3 - 2 * t);
+
+    this.mixGemA.x = this.mixStartAx + (this.mixCenterX - this.mixStartAx) * s;
+    this.mixGemB.x = this.mixStartBx + (this.mixCenterX - this.mixStartBx) * s;
+
+    // Bob animation on source gems
+    this.mixGemA.bobPhase += dt * 1.5;
+    this.mixGemA.sparklePhase += dt * 2.0;
+    this.mixGemB.bobPhase += dt * 1.5;
+    this.mixGemB.sparklePhase += dt * 2.0;
+
+    // Trailing particles as gems move
+    if (Math.random() < 0.4) {
+      this.particles.spawn({
+        x: this.mixGemA.x + randomRange(-20, 20),
+        y: this.mixGemA.y + randomRange(-20, 20),
+        vx: randomRange(-20, 20),
+        vy: randomRange(-40, -10),
+        color: this.mixGemA.color,
+        size: randomRange(2, 5),
+        lifetime: randomRange(0.3, 0.6),
+        drag: 0.95,
+        fadeOut: true,
+        shrink: true,
+      });
+    }
+    if (Math.random() < 0.4) {
+      this.particles.spawn({
+        x: this.mixGemB.x + randomRange(-20, 20),
+        y: this.mixGemB.y + randomRange(-20, 20),
+        vx: randomRange(-20, 20),
+        vy: randomRange(-40, -10),
+        color: this.mixGemB.color,
+        size: randomRange(2, 5),
+        lifetime: randomRange(0.3, 0.6),
+        drag: 0.95,
+        fadeOut: true,
+        shrink: true,
+      });
+    }
+
+    if (this.phaseTimer >= MIXING_MERGE_DURATION) {
+      this.startMixingFlash();
+    }
+  }
+
+  private updateMixingFlash(dt: number): void {
+    this.mixFlashAlpha = Math.max(0, 1.0 - this.phaseTimer / MIXING_FLASH_DURATION);
+
+    if (this.phaseTimer >= MIXING_FLASH_DURATION) {
+      this.startMixingReveal();
+    }
+  }
+
+  private updateMixingReveal(dt: number): void {
+    // Scale result gem in with bounce
+    const t = Math.min(this.phaseTimer / MIXING_REVEAL_DURATION, 1.0);
+    // Overshoot ease: goes to ~1.15 then settles
+    const overshoot = 1 + 0.15 * Math.sin(t * Math.PI);
+    this.mixResultScale = t * overshoot;
+
+    if (this.mixResultGem) {
+      this.mixResultGem.bobPhase += dt * 1.5;
+      this.mixResultGem.sparklePhase += dt * 2.0;
+    }
+
+    if (this.phaseTimer >= MIXING_REVEAL_DURATION) {
+      this.startMixingChoice();
+    }
+  }
+
+  private updateMixingChoice(dt: number): void {
+    // Update shake timers
+    for (const choice of this.choices) {
+      if (choice.shakeTimer > 0) {
+        choice.shakeTimer = Math.max(0, choice.shakeTimer - dt);
+      }
+    }
+
+    // Flash timer for correct answer highlight
+    if (this.choiceFlashTimer > 0) {
+      this.choiceFlashTimer -= dt;
+      if (this.choiceFlashTimer <= 0) {
+        this.startCelebrate();
+      }
+    }
+
+    // Hint escalation
+    if (!this.choiceAnswered) {
+      const escalated = this.hintLadder.update(dt);
+      if (escalated && this.hintLadder.hintLevel === 1) {
+        this.voice?.hintRepeat(this.mixPair?.result ?? '');
+      }
+      if (this.hintLadder.autoCompleted && !this.choiceAnswered) {
+        this.autoCompleteMixing();
+      }
+    }
+
+    // Keep result gem bobbing
+    if (this.mixResultGem) {
+      this.mixResultGem.bobPhase += dt * 1.5;
+      this.mixResultGem.sparklePhase += dt * 2.0;
+    }
+  }
+
+  private updateCelebrate(dt: number): void {
+    // Ambient celebration sparks
+    const celebColor = this.currentColor?.hex ?? '#37B1E2';
+    if (Math.random() < 0.3) {
+      this.particles.spawn({
+        x: randomRange(200, DESIGN_WIDTH - 200),
+        y: randomRange(200, DESIGN_HEIGHT - 200),
+        vx: randomRange(-30, 30),
+        vy: randomRange(-60, -20),
+        color: celebColor,
+        size: randomRange(2, 6),
+        lifetime: randomRange(0.3, 0.7),
+        drag: 0.96,
+        fadeOut: true,
+        shrink: true,
+      });
+    }
+    if (this.phaseTimer >= CELEBRATE_DURATION) {
+      this.startNext();
     }
   }
 
@@ -549,8 +1122,9 @@ export class FlameColorsGame implements GameScreen {
     // Background
     this.bg.render(ctx);
 
-    // Dim background during play phase to highlight choices
-    if (this.phase === 'play' || this.phase === 'prompt') {
+    // Dim background during interactive phases
+    const dimPhases: GamePhase[] = ['play', 'prompt', 'mixing-animate', 'mixing-flash', 'mixing-reveal'];
+    if (dimPhases.includes(this.phase)) {
       ctx.save();
       ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
       ctx.fillRect(0, 0, DESIGN_WIDTH, DESIGN_HEIGHT);
@@ -567,19 +1141,34 @@ export class FlameColorsGame implements GameScreen {
     ctx.fillStyle = glowGrad;
     ctx.fillRect(SPRITE_X - 200, SPRITE_Y - 200, 400, 400);
 
-    // Draw gem targets
-    for (const gem of this.gems) {
-      if (!gem.alive) continue;
-      this.renderGem(ctx, gem);
-    }
+    // Mode-specific rendering
+    if (this.mode === 'mixing' && (
+      this.phase === 'mixing-animate' ||
+      this.phase === 'mixing-flash' ||
+      this.phase === 'mixing-reveal' ||
+      this.phase === 'play' ||
+      this.phase === 'celebrate'
+    )) {
+      this.renderMixing(ctx);
+    } else {
+      // Draw gem targets (find mode or shade mode)
+      for (const gem of this.gems) {
+        if (!gem.alive) continue;
+        this.renderGem(ctx, gem);
+      }
 
-    // Hint level 3: draw line from sprite toward correct target
-    if (this.phase === 'play' && this.hintLadder.hintLevel >= 3) {
-      const correctGem = this.gems.find(
-        g => g.colorName === this.currentColor?.name && g.alive,
-      );
-      if (correctGem) {
-        this.renderHintLine(ctx, correctGem);
+      // Hint level 3: draw line from sprite toward correct target
+      if (this.phase === 'play' && this.hintLadder.hintLevel >= 3) {
+        let correctGem: GemTarget | undefined;
+        if (this.mode === 'shade') {
+          const label = `${this.shadeTarget} ${this.shadeBaseColor}`;
+          correctGem = this.gems.find(g => g.colorName === label && g.alive);
+        } else {
+          correctGem = this.gems.find(g => g.colorName === this.currentColor?.name && g.alive);
+        }
+        if (correctGem) {
+          this.renderHintLine(ctx, correctGem);
+        }
       }
     }
 
@@ -589,9 +1178,9 @@ export class FlameColorsGame implements GameScreen {
     // Flame meter at top
     this.flameMeter.render(ctx);
 
-    // Color name label (during prompt/play phases)
-    if (this.currentColor && (this.phase === 'prompt' || this.phase === 'play')) {
-      this.renderColorLabel(ctx);
+    // Label text (during prompt/play phases)
+    if (this.phase === 'prompt' || this.phase === 'play') {
+      this.renderModeLabel(ctx);
     }
 
     // Banner text during banner/engage phases
@@ -599,6 +1188,165 @@ export class FlameColorsGame implements GameScreen {
       this.renderPhaseText(ctx);
     }
   }
+
+  // ===================== Mixing render ====================================
+
+  private renderMixing(ctx: CanvasRenderingContext2D): void {
+    // Render source gems (only during animate phase, fade out after)
+    if (this.phase === 'mixing-animate') {
+      if (this.mixGemA) this.renderGem(ctx, this.mixGemA);
+      if (this.mixGemB) this.renderGem(ctx, this.mixGemB);
+
+      // Label: "blue + yellow = ?"
+      this.renderMixingLabel(ctx);
+    }
+
+    // Flash overlay
+    if (this.phase === 'mixing-flash' && this.mixFlashAlpha > 0) {
+      ctx.save();
+      ctx.globalAlpha = this.mixFlashAlpha * 0.6;
+      ctx.fillStyle = this.mixResultGem?.color ?? '#ffffff';
+      ctx.fillRect(0, 0, DESIGN_WIDTH, DESIGN_HEIGHT);
+      ctx.restore();
+    }
+
+    // Result gem (during reveal, play, celebrate)
+    if (
+      this.mixResultGem &&
+      (this.phase === 'mixing-reveal' || this.phase === 'play' || this.phase === 'celebrate')
+    ) {
+      ctx.save();
+      const scale = this.phase === 'mixing-reveal' ? this.mixResultScale : 1;
+      if (scale > 0.01) {
+        ctx.translate(this.mixResultGem.x, this.mixResultGem.y);
+        ctx.scale(scale, scale);
+        ctx.translate(-this.mixResultGem.x, -this.mixResultGem.y);
+        this.renderGem(ctx, this.mixResultGem);
+      }
+      ctx.restore();
+    }
+
+    // Choice buttons (during play phase in mixing mode)
+    if (this.phase === 'play' && this.mode === 'mixing') {
+      this.renderChoiceButtons(ctx);
+    }
+  }
+
+  private renderMixingLabel(ctx: CanvasRenderingContext2D): void {
+    if (!this.mixPair) return;
+
+    const x = DESIGN_WIDTH / 2;
+    const y = DESIGN_HEIGHT * 0.15;
+    const text = `${this.mixPair.a} + ${this.mixPair.b} = ?`;
+
+    ctx.save();
+    ctx.font = 'bold 72px Fredoka, Nunito, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 6;
+    ctx.lineJoin = 'round';
+    ctx.strokeText(text, x, y);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.shadowColor = 'rgba(55, 177, 226, 0.5)';
+    ctx.shadowBlur = 20;
+    ctx.fillText(text, x, y);
+
+    ctx.restore();
+  }
+
+  // ===================== Choice button rendering ==========================
+
+  private renderChoiceButtons(ctx: CanvasRenderingContext2D): void {
+    // Question text
+    ctx.save();
+    ctx.font = 'bold 52px Fredoka, Nunito, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 5;
+    ctx.lineJoin = 'round';
+
+    const question = 'What color did we make?';
+    const questionY = DESIGN_HEIGHT * 0.72;
+    ctx.strokeText(question, DESIGN_WIDTH / 2, questionY);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillText(question, DESIGN_WIDTH / 2, questionY);
+    ctx.restore();
+
+    // Buttons
+    for (const choice of this.choices) {
+      const highlighted = this.choiceAnswered && choice.correct && this.choiceFlashTimer > 0;
+
+      // Hint level 2+: glow on correct choice
+      const isCorrectHint = choice.correct &&
+        !this.choiceAnswered &&
+        this.hintLadder.hintLevel >= 2;
+
+      ctx.save();
+
+      // Shake offset
+      let shakeX = 0;
+      if (choice.shakeTimer > 0) {
+        shakeX = Math.sin(choice.shakeTimer * 40) * 8 * (choice.shakeTimer / 0.4);
+      }
+
+      const dx = choice.x + shakeX;
+      const dy = choice.y;
+
+      // Hint glow
+      if (isCorrectHint) {
+        ctx.save();
+        ctx.shadowColor = '#37B1E2';
+        ctx.shadowBlur = 25;
+        ctx.strokeStyle = '#37B1E2';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.roundRect(dx - 4, dy - 4, BTN_W + 8, BTN_H + 8, 20);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Button background — use color swatch
+      const bgColor = highlighted ? '#FFD700' : 'rgba(20, 20, 50, 0.85)';
+      ctx.fillStyle = bgColor;
+      ctx.beginPath();
+      ctx.roundRect(dx, dy, BTN_W, BTN_H, 16);
+      ctx.fill();
+
+      // Color swatch circle on the left side of button
+      const swatchR = 26;
+      const swatchX = dx + 50;
+      const swatchY = dy + BTN_H / 2;
+      ctx.fillStyle = choice.colorHex;
+      ctx.beginPath();
+      ctx.arc(swatchX, swatchY, swatchR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = this.darkenColor(choice.colorHex, 0.5);
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      // Button border
+      ctx.strokeStyle = highlighted ? '#FFFFFF' : 'rgba(55, 177, 226, 0.6)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.roundRect(dx, dy, BTN_W, BTN_H, 16);
+      ctx.stroke();
+
+      // Button text
+      ctx.fillStyle = highlighted ? '#000000' : '#FFFFFF';
+      ctx.font = 'bold 44px Fredoka, Nunito, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(choice.label, dx + BTN_W / 2 + 20, dy + BTN_H / 2);
+
+      ctx.restore();
+    }
+  }
+
+  // ===================== Common rendering =================================
 
   private renderGem(ctx: CanvasRenderingContext2D, gem: GemTarget): void {
     ctx.save();
@@ -612,9 +1360,14 @@ export class FlameColorsGame implements GameScreen {
     const gy = gem.y + yOffset;
     const r = gem.radius;
 
-    // Hint level 2+: pulsing glow on correct gem
-    const isCorrect = gem.colorName === this.currentColor?.name;
-    const hintGlow = isCorrect && this.hintLadder.hintLevel >= 2;
+    // Hint level 2+: pulsing glow on correct gem (find/shade modes)
+    let isCorrect = false;
+    if (this.mode === 'shade') {
+      isCorrect = gem.colorName === `${this.shadeTarget} ${this.shadeBaseColor}`;
+    } else if (this.mode === 'find') {
+      isCorrect = gem.colorName === this.currentColor?.name;
+    }
+    const hintGlow = isCorrect && this.hintLadder.hintLevel >= 2 && this.phase === 'play';
 
     if (hintGlow) {
       const pulse = 1 + Math.sin(gem.bobPhase * 3) * 0.15;
@@ -705,12 +1458,20 @@ export class FlameColorsGame implements GameScreen {
     ctx.restore();
   }
 
-  private renderColorLabel(ctx: CanvasRenderingContext2D): void {
-    if (!this.currentColor) return;
-
+  private renderModeLabel(ctx: CanvasRenderingContext2D): void {
     const x = DESIGN_WIDTH / 2;
     const y = DESIGN_HEIGHT * 0.15;
-    const text = `Find ${this.currentColor.name}!`;
+    let text = '';
+
+    if (this.mode === 'find' && this.currentColor) {
+      text = `Find ${this.currentColor.name}!`;
+    } else if (this.mode === 'shade') {
+      text = `Find the ${this.shadeTarget.toUpperCase()} ${this.shadeBaseColor}!`;
+    } else if (this.mode === 'mixing' && this.phase === 'play') {
+      text = 'What color did we make?';
+    } else {
+      return;
+    }
 
     ctx.save();
     ctx.font = 'bold 72px Fredoka, Nunito, sans-serif';
@@ -767,8 +1528,21 @@ export class FlameColorsGame implements GameScreen {
   // -----------------------------------------------------------------------
 
   handleClick(x: number, y: number): void {
-    if (this.phase !== 'play' || this.inputLocked) return;
+    if (this.inputLocked) return;
 
+    if (this.phase === 'play' && this.mode === 'mixing') {
+      this.handleMixingChoiceClick(x, y);
+      return;
+    }
+
+    if (this.phase === 'play' && this.mode === 'shade') {
+      this.handleShadeClick(x, y);
+      return;
+    }
+
+    if (this.phase !== 'play') return;
+
+    // Find mode: tap gems
     for (const gem of this.gems) {
       if (!gem.alive || gem.dimmed) continue;
       if (this.isGemHit(gem, x, y)) {
